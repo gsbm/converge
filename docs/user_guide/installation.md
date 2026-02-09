@@ -6,16 +6,10 @@
 
 ## Base install
 
-From PyPI:
+From source:
 
 ```bash
-pip install converge
-```
-
-From source (editable):
-
-```bash
-git clone https://github.com/your-org/converge.git
+git clone https://github.com/gsbm/converge.git
 cd converge
 pip install -e .
 ```

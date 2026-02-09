@@ -6,7 +6,7 @@
 
 ## Base install
 
-From source :
+From source:
 
 ```bash
 git clone https://github.com/gsbm/converge.git

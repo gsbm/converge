@@ -3,7 +3,20 @@ name = "converge"
 version = "0.1.0"
 description = "A distributed operating system for agents"
 authors = [{name = "gsbm"}]
+readme = "README.md"
 requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = { glob = "LICEN[CS]E*" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Distributed Computing",
+]
 dependencies = [
     "asyncio>=3.4.3",
     "cryptography>=41.0.0",
@@ -40,6 +53,10 @@ websocket = [
 cli = [
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gsbm/converge"
+Issues = "https://github.com/gsbm/converge/issues"
 
 [project.scripts]
 converge = "converge.cli:main"

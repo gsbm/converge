@@ -278,3 +278,30 @@ async def test_executor_invoke_tool_unknown_ignored():
     pm = MagicMock(spec=PoolManager)
     executor = StandardExecutor("agent1", network, tm, pm, tool_registry=registry)
     await executor.execute([InvokeTool(tool_name="nonexistent", params={})])
+
+
+@pytest.mark.asyncio
+async def test_executor_custom_handlers():
+    """Custom decision types can be handled via custom_handlers."""
+    from dataclasses import dataclass
+
+    from converge.core.decisions import Decision
+
+    @dataclass
+    class CustomDecision(Decision):
+        value: str
+
+    seen = []
+
+    async def handle_custom(decision: CustomDecision):
+        seen.append(decision.value)
+
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+    executor = StandardExecutor(
+        "agent1", network, tm, pm,
+        custom_handlers={CustomDecision: handle_custom},
+    )
+    await executor.execute([CustomDecision(value="hello")])
+    assert seen == ["hello"]

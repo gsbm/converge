@@ -22,6 +22,7 @@ class Pool:
     admission_policy: dict[str, Any] = field(default_factory=dict)
     admission_policy_instance: Any = field(default=None, repr=False)
     governance: dict[str, Any] = field(default_factory=dict)
+    governance_model: Any = field(default=None, repr=False)  # GovernanceModel instance for resolve_dispute
     agents: set[str] = field(default_factory=set)
     trust_model: Any = field(default=None, repr=False)
     trust_threshold: float = 0.0

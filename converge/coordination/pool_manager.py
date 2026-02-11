@@ -24,7 +24,8 @@ class PoolManager:
 
         Args:
             spec (Dict[str, Any]): Dictionary of arguments for the Pool constructor.
-                May include "admission_policy": AdmissionPolicy instance.
+                May include "admission_policy": AdmissionPolicy instance;
+                "governance_model": GovernanceModel instance for dispute resolution.
 
         Returns:
             Pool: The newly created Pool instance.
@@ -37,7 +38,14 @@ class PoolManager:
             pass
         else:
             admission_policy_instance = None
-        pool = Pool(**spec, admission_policy_instance=admission_policy_instance)
+        governance_model = spec.pop("governance_model", None)
+        if governance_model is not None and not hasattr(governance_model, "resolve_dispute"):
+            governance_model = None
+        pool = Pool(
+            **spec,
+            admission_policy_instance=admission_policy_instance,
+            governance_model=governance_model,
+        )
         self.pools[pool.id] = pool
         self.store.put(f"pool:{pool.id}", pool)
         return pool
@@ -58,9 +66,9 @@ class PoolManager:
             # Try load
             pool = self.store.get(f"pool:{pool_id}")
             if pool:
-                 self.pools[pool_id] = pool
+                self.pools[pool_id] = pool
             else:
-                 return False
+                return False
 
         policy = getattr(pool, "admission_policy_instance", None)
         if policy is not None and hasattr(policy, "can_admit"):
@@ -95,9 +103,9 @@ class PoolManager:
         """
         pool = self.pools.get(pool_id)
         if not pool:
-             pool = self.store.get(f"pool:{pool_id}")
-             if pool:
-                 self.pools[pool_id] = pool
+            pool = self.store.get(f"pool:{pool_id}")
+            if pool:
+                self.pools[pool_id] = pool
 
         if pool:
             pool.remove_agent(agent_id)

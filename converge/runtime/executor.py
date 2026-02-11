@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from converge.coordination.pool_manager import PoolManager
@@ -64,6 +65,7 @@ class StandardExecutor:
         safety_policy: "tuple[ResourceLimits | None, ActionPolicy | None] | None" = None,
         replay_log: "ReplayLog | None" = None,
         tool_registry: "ToolRegistry | None" = None,
+        custom_handlers: dict[type, Callable[[Decision], Awaitable[None]]] | None = None,
     ):
         """
         Initialize the executor.
@@ -86,6 +88,9 @@ class StandardExecutor:
             tool_registry: Optional registry of tools. When set, InvokeTool decisions
                 look up the tool by name and run it with the given params; result is
                 discarded (agent may emit ReportTask separately to report results).
+            custom_handlers: Optional dict mapping decision type -> async handler(decision).
+                For custom Decision subclasses, register a handler so the executor runs it
+                instead of logging "Unknown decision type".
         """
         self.agent_id = agent_id
         self.network = network
@@ -99,6 +104,7 @@ class StandardExecutor:
         self.safety_policy = safety_policy
         self.replay_log = replay_log
         self.tool_registry = tool_registry
+        self.custom_handlers = custom_handlers or {}
 
     async def execute(self, decisions: list[Decision]) -> None:
         """
@@ -246,7 +252,11 @@ class StandardExecutor:
                         logger.warning("InvokeTool ignored: no tool_registry configured")
 
                 else:
-                    logger.warning(f"Unknown decision type: {type(decision)}")
+                    handler = self.custom_handlers.get(type(decision))
+                    if handler is not None:
+                        await handler(decision)
+                    else:
+                        logger.warning(f"Unknown decision type: {type(decision)}")
 
             except Exception as e:
                 logger.error(f"Error executing decision {decision}: {e}")

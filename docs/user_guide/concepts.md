@@ -107,10 +107,12 @@ The **discovery service** holds **agent descriptors** (id, topics, capabilities,
 
 - **Pools** enforce local rules (admission, governance model, optional trust threshold). When a pool has **trust_model** and **trust_threshold**, join is allowed only if the agent’s trust score is at least the threshold.
 - **Policy enforcement in the executor:** When **StandardExecutor** is given a **safety_policy** (ResourceLimits, ActionPolicy), it checks ActionPolicy before each decision (only allowed types run) and validates task resource constraints (cpu, memory_mb) for SubmitTask/ClaimTask.
-- **Policy** modules provide admission (open, whitelist, token), trust, governance (e.g. democratic, dictatorial), and safety (resource limits, action allowlists). See [Architecture/Process model](../architecture/process_model.md) and [API/policy](../api/policy.md).
+- **Policy** modules provide admission (open, whitelist, token), trust, governance (e.g. democratic, dictatorial, bicameral, veto, empirical), and safety (resource limits, action allowlists). You can implement a **custom governance model** by subclassing **GovernanceModel** and implementing **resolve_dispute(context)**; pass the instance when creating a pool or call it when resolving disputes. See [API/policy](../api/policy.md) for the built-in models and custom governance.
 
 ## Recovery
 
 **Pool and task state** are persisted in the **Store** used by PoolManager and TaskManager. On restart, create PoolManager and TaskManager with the **same store** (e.g. FileStore with the same path) so pools and tasks are restored. The **inbox** is not persisted; message replay is best-effort unless the transport supports it. The runtime’s optional **checkpoint_store** and **checkpoint_interval_sec** write a lightweight checkpoint (e.g. agent_id → last_activity_ts) for observability; they do not change processing or replay semantics.
+
+Most runtime and policy components are **configurable or replaceable** (transport, inbox, scheduler, executor, admission, trust, governance, store, metrics, replay, tools). See [Customization](customization.md) for a full list and how to plug in custom behavior.
 
 For the full API and process model, see [Architecture](../architecture/index.md) and the [API reference](../api/index.md).

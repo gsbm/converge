@@ -24,6 +24,31 @@ async def test_inbox_drop_when_full():
     assert batch[0] == 1
 
 
+@pytest.mark.asyncio
+async def test_runtime_custom_inbox_kwargs_and_executor_kwargs():
+    """Runtime accepts inbox_kwargs and executor_kwargs for customization."""
+    from converge.coordination.task_manager import TaskManager
+    from converge.extensions.storage.memory import MemoryStore
+
+    id_a = Identity.generate()
+    agent = CoverageAgent(id_a)
+    transport = LocalTransport(id_a.fingerprint)
+    pm = PoolManager(store=MemoryStore())
+    tm = TaskManager(store=MemoryStore())
+    runtime = AgentRuntime(
+        agent,
+        transport,
+        pool_manager=pm,
+        task_manager=tm,
+        inbox_kwargs={"maxsize": 2},
+        executor_kwargs={"custom_handlers": {}},
+    )
+    assert runtime.inbox._queue.maxsize == 2
+    await runtime.start()
+    await asyncio.sleep(0.02)
+    await runtime.stop()
+
+
 class CoverageAgent(Agent):
     def __init__(self, identity):
         super().__init__(identity=identity)

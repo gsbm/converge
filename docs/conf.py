@@ -62,5 +62,6 @@ html_theme_options = {
     "globaltoc_expand_depth": 2,
     "toctree_collapse": False,
     "toctree_maxdepth": 4,
-    "accent_color": "sky",
+    "accent_color": "bronze",
+    "github_url": "https://github.com/gsbm/converge",
 }

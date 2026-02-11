@@ -23,6 +23,9 @@ class Inbox:
     """
     Buffers incoming messages for the agent.
     Supports bounded queue with configurable behavior when full.
+
+    **Custom inbox:** Any object that implements ``async push(message)`` and
+    ``poll(batch_size=10) -> list`` can be passed to AgentRuntime as ``inbox=``.
     """
     def __init__(self, maxsize: int | None = None, *, drop_when_full: bool = False):
         self._queue = asyncio.Queue(maxsize=maxsize or 0)
@@ -65,6 +68,11 @@ class AgentRuntime:
         tool_registry=None,
         checkpoint_store: "Store | None" = None,
         checkpoint_interval_sec: float = 60.0,
+        inbox=None,
+        inbox_kwargs: dict[str, Any] | None = None,
+        scheduler=None,
+        executor_factory=None,
+        executor_kwargs: dict[str, Any] | None = None,
     ):
         """
         Initialize the agent runtime.
@@ -93,10 +101,23 @@ class AgentRuntime:
                 for observability. Does not affect message replay; pool/task state is restored by
                 using the same store for PoolManager and TaskManager on restart.
             checkpoint_interval_sec: Interval in seconds between checkpoint writes when checkpoint_store is set.
+            inbox: Optional custom inbox. Must implement push(message) and poll(batch_size) -> list.
+                If None, an Inbox is created with inbox_kwargs.
+            inbox_kwargs: Optional dict of kwargs for the default Inbox when inbox is None (e.g. maxsize, drop_when_full).
+            scheduler: Optional custom scheduler. Must implement notify() and wait_for_work(timeout) -> bool.
+                If None, the default Scheduler() is used.
+            executor_factory: Optional callable (agent_id, network, task_manager, pool_manager, **kwargs) -> Executor.
+                When provided, the runtime calls it in the run loop to obtain the executor instead of building StandardExecutor.
+                Use for custom executors or to inject extra dependencies.
+            executor_kwargs: Optional dict of kwargs passed to StandardExecutor when executor_factory is not used
+                (e.g. custom_handlers, safety_policy, bidding_protocols). Ignored if executor_factory is set.
         """
         self.agent = agent
         self.transport = transport
-        self.inbox = Inbox()
+        if inbox is not None:
+            self.inbox = inbox
+        else:
+            self.inbox = Inbox(**(inbox_kwargs or {}))
         self.running = False
         self._loop_task: asyncio.Task | None = None
         self._listen_task: asyncio.Task | None = None
@@ -109,28 +130,13 @@ class AgentRuntime:
         self.checkpoint_store = checkpoint_store
         self.checkpoint_interval_sec = checkpoint_interval_sec
         self._last_checkpoint_ts: float = 0.0
+        self.executor_factory = executor_factory
+        self.executor_kwargs = executor_kwargs or {}
 
-        # New components
-        from .executor import StandardExecutor
         from .scheduler import Scheduler
         self.pool_manager = pool_manager
         self.task_manager = task_manager
-        self.scheduler = Scheduler()
-
-        if pool_manager and task_manager:
-            self.executor = StandardExecutor(
-                agent.id, None, task_manager, pool_manager,
-                metrics_collector=metrics_collector,
-            )
-            # Wait, StandardExecutor needs Network/Transport.
-            # The original code acted on Transport directly for messages.
-            # Let's adjust StandardExecutor or wrap Transport.
-            # Actually, `AgentNetwork` wraps transport.
-            # If we don't have AgentNetwork instance here, we can't use StandardExecutor easily without hacking.
-            # To avoid breaking changes, let's keep inline execution or specific logic for now
-            # OR wrap transport in a simple adapter if we really want to use Executor.
-            # Let's simple-inline the Executor usage logic but modifying it to accept Transport.
-            pass
+        self.scheduler = Scheduler() if scheduler is None else scheduler
 
     async def start(self) -> None:
         """Start the agent loop."""
@@ -227,12 +233,27 @@ class AgentRuntime:
         # Let's stick to a local helper that delegates to StandardExecutor if possible.
 
         if self.task_manager and self.pool_manager:
-            executor = StandardExecutor(
-                self.agent.id, network, self.task_manager, self.pool_manager,
-                metrics_collector=self.metrics_collector,
-                replay_log=self.replay_log,
-                tool_registry=self.tool_registry,
-            )
+            if self.executor_factory is not None:
+                executor = self.executor_factory(
+                    self.agent.id,
+                    network,
+                    self.task_manager,
+                    self.pool_manager,
+                    metrics_collector=self.metrics_collector,
+                    replay_log=self.replay_log,
+                    tool_registry=self.tool_registry,
+                )
+            else:
+                executor = StandardExecutor(
+                    self.agent.id,
+                    network,
+                    self.task_manager,
+                    self.pool_manager,
+                    metrics_collector=self.metrics_collector,
+                    replay_log=self.replay_log,
+                    tool_registry=self.tool_registry,
+                    **self.executor_kwargs,
+                )
         else:
             executor = None
 

@@ -5,6 +5,10 @@ class Scheduler:
     """
     Event-driven scheduler for the agent runtime.
     Replaces busy-wait polling with asyncio.Event signaling.
+
+    **Custom scheduler:** Any object that implements ``notify()`` and
+    ``async wait_for_work(timeout: float | None) -> bool`` can be passed to
+    AgentRuntime as ``scheduler=``.
     """
     def __init__(self):
         self._wake_event = asyncio.Event()

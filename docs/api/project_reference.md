@@ -51,9 +51,9 @@ Compact index of public modules and their role. For full signatures and docstrin
 
 | Module | Role |
 |--------|------|
-| `converge.runtime.loop` | AgentRuntime, Inbox: start/stop, discovery/identity_registry/replay_log/checkpoint_store/tool_registry. |
+| `converge.runtime.loop` | AgentRuntime, Inbox: start/stop; optional inbox, inbox_kwargs, scheduler, executor_factory, executor_kwargs for full customization. |
 | `converge.runtime.scheduler` | Scheduler: notify, wait_for_work(timeout). |
-| `converge.runtime.executor` | Executor protocol, StandardExecutor: execute decisions including SendMessage, SubmitTask, ClaimTask, JoinPool, LeavePool, CreatePool, ReportTask, coordination (SubmitBid, Vote, Propose, etc.), InvokeTool; optional tool_registry, replay_log, safety_policy. |
+| `converge.runtime.executor` | Executor protocol, StandardExecutor: execute decisions; optional custom_handlers (type -> async handler) for custom decision types, plus tool_registry, replay_log, safety_policy. |
 
 ## converge.policy
 
@@ -61,7 +61,7 @@ Compact index of public modules and their role. For full signatures and docstrin
 |--------|------|
 | `converge.policy.admission` | AdmissionPolicy ABC; OpenAdmission, WhitelistAdmission, TokenAdmission. |
 | `converge.policy.trust` | TrustModel: get_trust, update_trust. |
-| `converge.policy.governance` | GovernanceModel ABC; DemocraticGovernance, DictatorialGovernance. |
+| `converge.policy.governance` | GovernanceModel ABC (subclass to implement custom governance); Democratic, Dictatorial, Bicameral, Veto, Empirical. |
 | `converge.policy.safety` | ResourceLimits, ActionPolicy, validate_safety. |
 
 ## converge.observability

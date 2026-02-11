@@ -16,7 +16,7 @@ def test_transport_base_abstract():
         async def send(self, m):
             await super().send(m)
 
-        async def receive(self):
+        async def receive(self, timeout=None):
             return await super().receive()
 
     t = MyTransport()

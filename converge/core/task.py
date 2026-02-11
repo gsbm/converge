@@ -25,7 +25,9 @@ class Task:
         objective (Dict[str, Any]): Structural description of the goal.
         inputs (Dict[str, Any]): Data required to execute the task.
         outputs (Optional[Dict[str, Any]]): Resulting data after execution.
-        constraints (Dict[str, Any]): Limitations or requirements (e.g. timeout, compute).
+        constraints (Dict[str, Any]): Limitations or requirements. Conventional keys (enforced by
+        custom logic if needed): timeout_sec, deadline (iso or unix), claim_ttl_sec (seconds
+        after claim before task returns to PENDING if not reported), max_retries, cpu, memory_mb.
         evaluator (str): Identifier for the mechanism to validate results.
         state (TaskState): Current lifecycle state of the task.
         assigned_to (Optional[str]): Fingerprint of the agent assigned to this task.
@@ -45,6 +47,7 @@ class Task:
     # Optional metadata
     assigned_to: str | None = None
     result: Any | None = None
+    claimed_at: float | None = None  # time.monotonic() when claimed; used for claim_ttl_sec
 
     # Routing: only agents in the pool or matching topic/capabilities should see this task
     pool_id: str | None = None

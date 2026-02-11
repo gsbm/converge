@@ -19,20 +19,25 @@ class Transport(ABC):
         pass
 
     @abstractmethod
-    async def receive(self) -> Message:
-        """Receive a message."""
+    async def receive(self, timeout: float | None = None) -> Message:
+        """
+        Receive a message.
+        If timeout is set, return within that many seconds or raise TimeoutError.
+        """
         pass
 
     async def receive_verified(
         self,
         identity_registry: "IdentityRegistry",
+        timeout: float | None = None,
     ) -> Message | None:
         """
         Receive a message and verify its signature.
         Returns the message if verified, or None if verification fails.
+        If timeout is set, receive must complete within that time or TimeoutError is raised.
         Default implementation receives and verifies via Message.verify().
         """
-        msg = await self.receive()
+        msg = await self.receive(timeout=timeout)
         pubkey = identity_registry.get(msg.sender)
         if pubkey and msg.verify(pubkey):
             return msg

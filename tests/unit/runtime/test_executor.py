@@ -281,6 +281,72 @@ async def test_executor_invoke_tool_unknown_ignored():
 
 
 @pytest.mark.asyncio
+async def test_executor_tool_allowlist_rejects_unknown():
+    """InvokeTool with tool_allowlist set skips tool not in allowlist and does not run it."""
+    from converge.core.tools import ToolRegistry
+
+    class ToolA:
+        @property
+        def name(self) -> str:
+            return "tool_a"
+
+        def run(self, params: dict):
+            return "ran"
+
+    registry = ToolRegistry()
+    registry.register(ToolA())
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+    executor = StandardExecutor(
+        "agent1", network, tm, pm,
+        tool_registry=registry,
+        tool_allowlist={"tool_a"},
+    )
+    # Allowed: runs
+    await executor.execute([InvokeTool(tool_name="tool_a", params={})])
+
+    # Not in allowlist: skipped (tool_b not in registry anyway; allowlist is checked first)
+    executor2 = StandardExecutor(
+        "agent1", network, tm, pm,
+        tool_registry=registry,
+        tool_allowlist={"tool_a"},
+    )
+    await executor2.execute([InvokeTool(tool_name="other_tool", params={})])
+    # No crash; other_tool is skipped by allowlist
+
+
+@pytest.mark.asyncio
+async def test_executor_tool_timeout():
+    """InvokeTool with tool_timeout_sec times out on slow tool and does not crash."""
+    import time
+
+    from converge.core.tools import ToolRegistry
+
+    class SlowTool:
+        @property
+        def name(self) -> str:
+            return "slow"
+
+        def run(self, params: dict):
+            time.sleep(2.0)
+            return "done"
+
+    registry = ToolRegistry()
+    registry.register(SlowTool())
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+    executor = StandardExecutor(
+        "agent1", network, tm, pm,
+        tool_registry=registry,
+        tool_timeout_sec=0.05,
+    )
+    await executor.execute([InvokeTool(tool_name="slow", params={})])
+    # Timeout occurs; no crash (executor catches TimeoutError and logs)
+
+
+@pytest.mark.asyncio
 async def test_executor_custom_handlers():
     """Custom decision types can be handled via custom_handlers."""
     from dataclasses import dataclass

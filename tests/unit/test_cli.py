@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from converge.cli import _create_transport, _load_config, main
+from converge.cli import _create_transport, _load_config, _validate_config, main
 
 
 def test_cli_main_run():
@@ -102,3 +102,22 @@ def test_main_module():
 
         converge.__main__.main()
         mock_main.assert_called_once()
+
+
+def test_validate_config_rejects_invalid_port():
+    """Invalid config (e.g. port as string 'abc') raises ValueError with a clear message."""
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        _validate_config({"port": "abc"})
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        _validate_config({"agents": "not-a-number"})
+
+
+def test_validate_config_accepts_valid_config():
+    _validate_config({})
+    _validate_config({"transport": "local", "port": 8888, "agents": 2})
+    _validate_config({"port": 9999, "pool_id": "p1", "discovery_store": "memory"})
+
+
+def test_validate_config_allows_unknown_keys():
+    """Unknown keys are allowed (backward compatibility)."""
+    _validate_config({"unknown_key": 42, "port": 8888})

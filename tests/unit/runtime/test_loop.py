@@ -24,6 +24,27 @@ async def test_inbox_drop_when_full():
     assert batch[0] == 1
 
 
+def test_runtime_health_and_ready_check():
+    """When health_check or ready_check callables are set, is_healthy() and is_ready() delegate to them."""
+    id_a = Identity.generate()
+    agent = Agent(id_a)
+    transport = LocalTransport(id_a.fingerprint)
+    runtime = AgentRuntime(agent, transport)
+    assert runtime.is_healthy() is True
+    assert runtime.is_ready() is True
+
+    runtime2 = AgentRuntime(
+        agent, transport,
+        health_check=lambda: False,
+        ready_check=lambda: True,
+    )
+    assert runtime2.is_healthy() is False
+    assert runtime2.is_ready() is True
+
+    runtime3 = AgentRuntime(agent, transport, ready_check=lambda: False)
+    assert runtime3.is_ready() is False
+
+
 @pytest.mark.asyncio
 async def test_runtime_custom_inbox_kwargs_and_executor_kwargs():
     """Runtime accepts inbox_kwargs and executor_kwargs for customization."""
@@ -307,7 +328,7 @@ async def test_runtime_receive_verified_path_called():
     call_count = [0]
 
     class TransportWithVerified:
-        async def receive_verified(self, _reg):
+        async def receive_verified(self, _reg, timeout=None):
             call_count[0] += 1
             if call_count[0] == 1:
                 return

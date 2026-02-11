@@ -12,6 +12,8 @@ import logging
 import os
 from pathlib import Path
 
+from pydantic import BaseModel, ValidationError
+
 from converge.core.agent import Agent
 from converge.core.identity import Identity
 from converge.network.transport.local import LocalTransport
@@ -55,17 +57,38 @@ def _load_config(path: str | None) -> dict:
                         config = {**config, **file_config}
                 except ImportError:
                     pass
+    # Coerce port/agents only when convertible; leave invalid values so validation fails fast
     if "port" in config and not isinstance(config["port"], int):
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             config["port"] = int(config["port"])
-        except (ValueError, TypeError):
-            config["port"] = 8888
     if "agents" in config and not isinstance(config["agents"], int):
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             config["agents"] = int(config["agents"])
-        except (ValueError, TypeError):
-            config["agents"] = 1
     return config
+
+
+class _RunConfigSchema(BaseModel):
+    """Schema for known run config keys. Unknown keys are allowed (extra='allow')."""
+
+    model_config = {"extra": "allow"}
+
+    transport: str | None = None
+    host: str | None = None
+    port: int | None = None
+    agents: int | None = None
+    pool_id: str | None = None
+    discovery_store: str | None = None
+    config: str | None = None
+
+
+def _validate_config(config: dict) -> None:
+    """Validate known config keys. Invalid values raise ValueError with a clear message."""
+    try:
+        _RunConfigSchema.model_validate(config)
+    except ValidationError as e:
+        errors = e.errors(include_url=False)
+        parts = [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in errors]
+        raise ValueError("Invalid configuration: " + "; ".join(parts)) from e
 
 
 def _create_transport(transport_type: str, agent_id: str, host: str, port: int):
@@ -97,13 +120,16 @@ def main() -> None:
 
     if args.command == "run":
         config = _load_config(args.config)
+        _validate_config(config)
         if args.verbose:
             logging.basicConfig(level=logging.DEBUG)
 
         transport_type = (config.get("transport") or "local").lower()
-        host = config.get("host") or "127.0.0.1"
-        port = config.get("port") or 8888
-        num_agents = max(1, int(config.get("agents") or 1))
+        host = str(config.get("host") or "127.0.0.1")
+        raw_port = config.get("port")
+        port: int = int(raw_port) if raw_port is not None else 8888
+        raw_agents = config.get("agents")
+        num_agents: int = max(1, int(raw_agents) if raw_agents is not None else 1)
         pool_id = config.get("pool_id")
         discovery_store_path = config.get("discovery_store")
 

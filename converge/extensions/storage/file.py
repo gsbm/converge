@@ -44,3 +44,11 @@ class FileStore(Store):
         if not self.base_path.exists():
             return []
         return [f.name for f in self.base_path.iterdir() if f.name.startswith(prefix)]
+
+    def put_if_absent(self, key: str, value: Any) -> bool:
+        """Put only if key is absent. Not atomic across processes (file existence check then write)."""
+        path = self._get_path(key)
+        if path.exists():
+            return False
+        self.put(key, value)
+        return True

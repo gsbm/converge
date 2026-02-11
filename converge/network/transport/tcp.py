@@ -158,5 +158,7 @@ class TcpTransport(Transport):
             # Retry once? Or just fail.
             pass
 
-    async def receive(self) -> Message:
+    async def receive(self, timeout: float | None = None) -> Message:
+        if timeout is not None:
+            return await asyncio.wait_for(self.inbox.get(), timeout=timeout)
         return await self.inbox.get()

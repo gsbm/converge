@@ -71,6 +71,16 @@ pip install -e ".[docs]"           # Build docs: cd docs && make html
 
    TCP tests require network; run the full suite without the ignore for complete coverage where the environment allows.
 
+   **Testing:** Unit tests (`tests/unit/`), integration tests (`tests/integration/`), and end-to-end tests (`tests/e2e/`) can be run together with `pytest tests/` or by directory. E2E tests include multi-agent discovery and pool, restart recovery, and chaos-style claim TTL. A minimal **performance benchmark** (task submit/claim/report throughput) is in `benchmarks/local_task_throughput.py`; run with `python benchmarks/local_task_throughput.py` (optional env: `N=200`). No CI gate for benchmarks; use to spot regressions or compare customizations.
+
+## Upgrading
+
+When a new version is released, check the changelog for config and API changes. Run your test suite after upgrading. New optional config keys and parameters are added in a backward-compatible way; breaking changes are limited to the public API of core modules and are documented in release notes.
+
+## Versioning and compatibility
+
+Converge follows **semantic versioning**. Breaking changes are limited to the public API of core modules (e.g. `converge.core`, `converge.network`, `converge.coordination`, `converge.runtime`). New optional config keys and new optional parameters may be added in minor releases; existing config and call sites remain valid. After upgrading, run your test suite and see the changelog for any migration notes.
+
 ## Building documentation
 
 ```bash

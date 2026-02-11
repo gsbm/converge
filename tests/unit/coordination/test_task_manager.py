@@ -209,3 +209,63 @@ def test_list_pending_tasks_for_agent_combined_filters():
     assert t1.id in ids_p1
     assert t2.id in ids_p1
     assert t3.id not in ids_p1
+
+
+def test_cancel_task():
+    tm = TaskManager()
+    task = Task()
+    tm.submit(task)
+    assert tm.cancel_task(task.id) is True
+    assert task.state == TaskState.CANCELLED
+    assert task.id not in tm.pending_task_ids
+    assert tm.cancel_task(task.id) is False
+    task2 = Task()
+    tm.submit(task2)
+    tm.claim("a1", task2.id)
+    tm.report("a1", task2.id, "done")
+    assert tm.cancel_task(task2.id) is False
+
+
+def test_fail_task_by_assigned_agent():
+    tm = TaskManager()
+    task = Task()
+    tm.submit(task)
+    tm.claim("agent1", task.id)
+    tm.fail_task(task.id, {"error": "timeout"}, agent_id="agent1")
+    assert task.state == TaskState.FAILED
+    assert task.result == {"error": "timeout"}
+
+
+def test_fail_task_unauthorized_raises():
+    tm = TaskManager()
+    task = Task()
+    tm.submit(task)
+    tm.claim("agent1", task.id)
+    with pytest.raises(ValueError, match="not authorized"):
+        tm.fail_task(task.id, "err", agent_id="agent2")
+
+
+def test_fail_task_system_level():
+    tm = TaskManager()
+    task = Task()
+    tm.submit(task)
+    tm.claim("agent1", task.id)
+    tm.fail_task(task.id, "system failure", agent_id=None)
+    assert task.state == TaskState.FAILED
+
+
+def test_release_expired_claims():
+    import time
+    tm = TaskManager()
+    task = Task(constraints={"claim_ttl_sec": 0.1})
+    tm.submit(task)
+    tm.claim("agent1", task.id)
+    assert task.state == TaskState.ASSIGNED
+    assert task.claimed_at is not None
+    time.sleep(0.15)
+    released = tm.release_expired_claims(time.monotonic())
+    assert released == [task.id]
+    assert task.state == TaskState.PENDING
+    assert task.assigned_to is None
+    assert task.claimed_at is None
+    assert task.id in tm.pending_task_ids

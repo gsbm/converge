@@ -23,3 +23,12 @@ def test_memory_store():
 
     prefixed = store.list(prefix="key")
     assert "key2" in prefixed
+
+
+def test_memory_store_put_if_absent():
+    store = MemoryStore()
+    assert store.put_if_absent("k", "v1") is True
+    assert store.get("k") == "v1"
+    assert store.put_if_absent("k", "v2") is False
+    assert store.get("k") == "v1"
+    assert store.put_if_absent("k2", "x") is True

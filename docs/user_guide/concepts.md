@@ -49,11 +49,18 @@ Topics are structured (namespace + attributes + optional version), not free-text
 A **task** is a unit of work with:
 
 - Id, objective, inputs, optional outputs.
-- State: PENDING → ASSIGNED → COMPLETED (and optional evaluator).
-- Optional assignment and result.
+- State: PENDING → ASSIGNED → COMPLETED (and FAILED, CANCELLED). Optional evaluator.
+- Optional assignment, result, and **claimed_at** (for claim TTL).
 - **Routing** (optional): `pool_id`, `topic`, and `required_capabilities` restrict which agents see the task. When the runtime has a pool manager, it calls `list_pending_tasks_for_agent` so each agent only sees tasks for its pools and capabilities.
+- **Constraints** (optional): conventional keys include `timeout_sec`, `deadline`, `claim_ttl_sec` (seconds after claim before the task can be released back to PENDING), `max_retries`, `cpu`, `memory_mb`. Enforcement is by custom executor or safety logic, not the core.
 
-Tasks are first-class: submitted to a **task manager**, claimed by agents, and reported via decisions. The task manager can use a **store** for persistence (e.g. in-memory or file-backed).
+Tasks are first-class: submitted to a **task manager**, claimed by agents, and reported via decisions. The task manager supports **cancel_task** and **fail_task**; call **release_expired_claims(time.monotonic())** periodically to release tasks whose claim TTL has elapsed. The task manager can use a **store** for persistence (e.g. in-memory or file-backed).
+
+## Reliability and idempotency
+
+Task submission and report are **idempotent** only if the caller uses stable task IDs or idempotency keys. For safe retries: use client-generated task IDs for submit, or store an idempotency key in `task.inputs` and deduplicate in your handler.
+
+**Message delivery** is best-effort by default. Use application-level acks and idempotent handlers where needed. The runtime uses a configurable **receive timeout** so the listen loop can react to shutdown; **Inbox** supports **maxsize** and **drop_when_full** for backpressure. See [Design](../architecture/design.md#message-delivery-and-reliability).
 
 ## Tools and actions
 
@@ -107,7 +114,7 @@ The **discovery service** holds **agent descriptors** (id, topics, capabilities,
 
 - **Pools** enforce local rules (admission, governance model, optional trust threshold). When a pool has **trust_model** and **trust_threshold**, join is allowed only if the agent’s trust score is at least the threshold.
 - **Policy enforcement in the executor:** When **StandardExecutor** is given a **safety_policy** (ResourceLimits, ActionPolicy), it checks ActionPolicy before each decision (only allowed types run) and validates task resource constraints (cpu, memory_mb) for SubmitTask/ClaimTask.
-- **Policy** modules provide admission (open, whitelist, token), trust, governance (e.g. democratic, dictatorial, bicameral, veto, empirical), and safety (resource limits, action allowlists). You can implement a **custom governance model** by subclassing **GovernanceModel** and implementing **resolve_dispute(context)**; pass the instance when creating a pool or call it when resolving disputes. See [API/policy](../api/policy.md) for the built-in models and custom governance.
+- **Policy** modules provide admission (open, whitelist, token), trust, governance (e.g. democratic, dictatorial, bicameral, veto, empirical), and safety (resource limits, action allowlists). You can implement a **custom governance model** by subclassing **GovernanceModel** and implementing **resolve_dispute(context)**; pass the instance when creating a pool or call it when resolving disputes. See [API/policy](../api/policy.md) for the built-in models and custom governance. For identity, verification, tool allowlists, timeouts, and deployment recommendations, see [Security](../guides/security.md).
 
 ## Recovery
 

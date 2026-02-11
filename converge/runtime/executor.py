@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
@@ -66,6 +67,8 @@ class StandardExecutor:
         replay_log: "ReplayLog | None" = None,
         tool_registry: "ToolRegistry | None" = None,
         custom_handlers: dict[type, Callable[[Decision], Awaitable[None]]] | None = None,
+        tool_timeout_sec: float | None = None,
+        tool_allowlist: set[str] | None = None,
     ):
         """
         Initialize the executor.
@@ -91,6 +94,12 @@ class StandardExecutor:
             custom_handlers: Optional dict mapping decision type -> async handler(decision).
                 For custom Decision subclasses, register a handler so the executor runs it
                 instead of logging "Unknown decision type".
+            tool_timeout_sec: Optional timeout in seconds for tool execution. When set,
+                tool.run(params) is run in a thread and must complete within this time
+                or the call is cancelled and an error is logged; the agent may report
+                task failure separately.
+            tool_allowlist: Optional set of allowed tool names. When set, InvokeTool for
+                a tool not in this set is skipped and a warning is logged.
         """
         self.agent_id = agent_id
         self.network = network
@@ -105,6 +114,8 @@ class StandardExecutor:
         self.replay_log = replay_log
         self.tool_registry = tool_registry
         self.custom_handlers = custom_handlers or {}
+        self.tool_timeout_sec = tool_timeout_sec
+        self.tool_allowlist = tool_allowlist
 
     async def execute(self, decisions: list[Decision]) -> None:
         """
@@ -237,17 +248,35 @@ class StandardExecutor:
 
                 elif isinstance(decision, InvokeTool):
                     if self.tool_registry is not None:
-                        tool = self.tool_registry.get(decision.tool_name)
-                        if tool is not None:
-                            logger.debug(f"Executing InvokeTool: {decision.tool_name}")
-                            try:
-                                tool.run(decision.params)
-                                if self.metrics_collector:
-                                    self.metrics_collector.inc("tools_invoked")
-                            except Exception as e:
-                                logger.error(f"Tool {decision.tool_name} failed: {e}")
+                        if self.tool_allowlist is not None and decision.tool_name not in self.tool_allowlist:
+                            logger.warning(
+                                "InvokeTool skipped: tool %s not in allowlist",
+                                decision.tool_name,
+                            )
                         else:
-                            logger.warning(f"Tool not found: {decision.tool_name}")
+                            tool = self.tool_registry.get(decision.tool_name)
+                            if tool is not None:
+                                logger.debug(f"Executing InvokeTool: {decision.tool_name}")
+                                try:
+                                    if self.tool_timeout_sec is not None:
+                                        await asyncio.wait_for(
+                                            asyncio.to_thread(tool.run, decision.params),
+                                            timeout=self.tool_timeout_sec,
+                                        )
+                                    else:
+                                        tool.run(decision.params)
+                                    if self.metrics_collector:
+                                        self.metrics_collector.inc("tools_invoked")
+                                except TimeoutError:
+                                    logger.error(
+                                        "Tool %s timed out after %.1fs",
+                                        decision.tool_name,
+                                        self.tool_timeout_sec,
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Tool {decision.tool_name} failed: {e}")
+                            else:
+                                logger.warning(f"Tool not found: {decision.tool_name}")
                     else:
                         logger.warning("InvokeTool ignored: no tool_registry configured")
 

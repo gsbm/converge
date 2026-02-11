@@ -37,3 +37,20 @@ class MetricsCollector:
             "counters": self.counters.copy(),
             "gauges": self.gauges.copy(),
         }
+
+    def format_prometheus(self) -> str:
+        """
+        Return metrics in Prometheus text exposition format for scrape endpoints.
+        Counters are emitted as gauge-style lines (current value); gauges as-is.
+        Expose this from an HTTP server in user code (e.g. /metrics).
+        """
+        lines: list[str] = []
+        for name, value in sorted(self.counters.items()):
+            safe_name = name.replace(".", "_").replace("-", "_")
+            lines.append(f"# TYPE {safe_name} counter")
+            lines.append(f"{safe_name} {value}")
+        for name, value in sorted(self.gauges.items()):
+            safe_name = name.replace(".", "_").replace("-", "_")
+            lines.append(f"# TYPE {safe_name} gauge")
+            lines.append(f"{safe_name} {value}")
+        return "\n".join(lines) + "\n" if lines else ""

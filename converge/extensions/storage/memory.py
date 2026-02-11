@@ -22,3 +22,10 @@ class MemoryStore(Store):
 
     def list(self, prefix: str = "") -> list[str]:
         return [k for k in self._data if k.startswith(prefix)]
+
+    def put_if_absent(self, key: str, value: Any) -> bool:
+        """Atomic put only if key is absent."""
+        if key in self._data:
+            return False
+        self._data[key] = value
+        return True

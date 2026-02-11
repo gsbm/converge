@@ -9,15 +9,15 @@ The framework is designed so that most components can be replaced or extended fo
 - **Scheduler**: Default event-driven scheduler can be replaced with `scheduler=your_scheduler`. Your object must implement `notify()` and `async wait_for_work(timeout) -> bool`.
 - **Executor**: Two options:
   - **executor_factory**: Callable `(agent_id, network, task_manager, pool_manager, **kwargs) -> Executor`. The runtime calls it each run loop to get the executor. Use for a fully custom executor.
-  - **executor_kwargs**: Dict of kwargs passed to the default `StandardExecutor` (e.g. `custom_handlers`, `safety_policy`, `bidding_protocols`). Ignored if `executor_factory` is set.
-- **Other runtime options**: `pool_manager`, `task_manager`, `metrics_collector`, `discovery_service`, `agent_descriptor`, `identity_registry`, `replay_log`, `tool_registry`, `checkpoint_store`, `checkpoint_interval_sec` are all optional and configurable.
+  - **executor_kwargs**: Dict of kwargs passed to the default `StandardExecutor` (e.g. `custom_handlers`, `safety_policy`, `bidding_protocols`, `tool_timeout_sec`, `tool_allowlist`). Ignored if `executor_factory` is set.
+- **Other runtime options**: `pool_manager`, `task_manager`, `metrics_collector`, `discovery_service`, `agent_descriptor`, `identity_registry`, `replay_log`, `tool_registry`, `checkpoint_store`, `checkpoint_interval_sec`, `health_check`, `ready_check`, `receive_timeout_sec` are all optional and configurable.
 
 ## Executor and decisions
 
 - **Custom decision types**: Define a new `Decision` subclass and register an async handler with `StandardExecutor(..., custom_handlers={MyDecision: my_async_handler})`. The handler receives the decision instance; run your logic and return. You can also pass `executor_kwargs={"custom_handlers": {...}}` when constructing the runtime.
 - **Safety**: `safety_policy=(ResourceLimits, ActionPolicy)` to restrict decision types and validate task resources.
 - **Coordination**: Optional `bidding_protocols`, `negotiation_protocol`, `delegation_protocol`, `votes_store` for built-in decision types.
-- **Tools**: `tool_registry` (ToolRegistry) for `InvokeTool`; implement the Tool protocol (`name`, `run(params)`).
+- **Tools**: `tool_registry` (ToolRegistry) for `InvokeTool`; implement the Tool protocol (`name`, `run(params)`). Optional `tool_timeout_sec` and `tool_allowlist` (set) on StandardExecutor for execution timeout and allowlist. See [Security](../guides/security.md).
 
 ## Agent
 
@@ -32,15 +32,16 @@ The framework is designed so that most components can be replaced or extended fo
 
 ## Storage and discovery
 
-- **Store**: Any implementation of the Store interface (`put`, `get`, `delete`, `list(prefix)`). Built-in: MemoryStore, FileStore. Used by PoolManager, TaskManager, DiscoveryService, checkpoint.
+- **Store**: Any implementation of the Store interface (`put`, `get`, `delete`, `list(prefix)`, and optionally **put_if_absent** for atomic put-when-absent). Built-in: MemoryStore (atomic put_if_absent), FileStore (put_if_absent not atomic across processes). Used by PoolManager, TaskManager, DiscoveryService, checkpoint. Stored values must be serializable; schema changes may require migration. See [Store backends](../guides/store_backends.md) for implementing Store with Redis, SQLite, or a database.
 - **Discovery**: `DiscoveryService(store=...)`; you can implement custom discovery by providing a different store or wrapping the service. `AgentDescriptor` can carry optional `public_key` for verification.
 - **Identity registry**: Implement or use `IdentityRegistry` (fingerprint → public key) for `receive_verified()` on transports.
 
 ## Observability
 
-- **Metrics**: Pass `metrics_collector` (e.g. `MetricsCollector`) to the runtime/executor; implement your own collector with `inc`, `gauge`, `snapshot` if needed.
+- **Metrics**: Pass `metrics_collector` (e.g. `MetricsCollector`) to the runtime/executor; implement your own collector with `inc`, `gauge`, `snapshot` if needed. `MetricsCollector.format_prometheus()` returns Prometheus text exposition format for scrape endpoints.
 - **Replay**: Pass `replay_log` (e.g. `ReplayLog`) to record messages; replace with a custom implementation that implements `record_message(message)` if needed.
-- **Tracing**: The runtime uses `trace()` from observability; you can replace or extend the tracing module for your backend.
+- **Tracing**: The runtime uses `trace()` from observability; register a **SpanExporter** via `register_span_exporter(exporter)` so `export(span, duration_sec)` is called when each trace context exits. You can forward to OpenTelemetry or logging.
+- **Health/readiness**: Pass `health_check` and `ready_check` callables to the runtime; `is_healthy()` and `is_ready()` delegate to them. No built-in HTTP; poll from a sidecar or CLI.
 
 ## Extensions
 

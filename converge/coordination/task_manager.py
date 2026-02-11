@@ -1,3 +1,4 @@
+import time
 from typing import Any
 
 from converge.core.store import Store
@@ -61,9 +62,123 @@ class TaskManager:
 
         task.state = TaskState.ASSIGNED
         task.assigned_to = agent_id
+        task.claimed_at = time.monotonic()
         self.pending_task_ids.discard(task_id)
         self.store.put(f"task:{task.id}", task)
         return True
+
+    def cancel_task(self, task_id: str) -> bool:
+        """
+        Cancel a task. Moves it to CANCELLED state.
+
+        Args:
+            task_id: The task ID.
+
+        Returns:
+            True if the task was found and cancelled, False if not found or not cancellable
+            (e.g. already COMPLETED, FAILED, or CANCELLED).
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            task = self.store.get(f"task:{task_id}")
+            if task:
+                self.tasks[task_id] = task
+            else:
+                return False
+        if task.state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED):
+            return False
+        self.pending_task_ids.discard(task_id)
+        task.state = TaskState.CANCELLED
+        task.assigned_to = None
+        task.claimed_at = None
+        self.store.put(f"task:{task.id}", task)
+        return True
+
+    def fail_task(
+        self,
+        task_id: str,
+        reason: Any,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
+        """
+        Mark a task as FAILED with a reason.
+
+        Args:
+            task_id: The task ID.
+            reason: Error or failure descriptor (stored in task.result).
+            agent_id: If set, only the assigned agent can fail the task (same as report).
+                If None, any caller can fail (e.g. system-level failure).
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            task = self.store.get(f"task:{task_id}")
+            if task:
+                self.tasks[task_id] = task
+            else:
+                return
+        if agent_id is not None and task.assigned_to != agent_id:
+            raise ValueError(f"Agent {agent_id} not authorized for task {task_id}")
+        task.state = TaskState.FAILED
+        task.result = reason
+        task.claimed_at = None
+        self.store.put(f"task:{task.id}", task)
+
+    def release_expired_claims(self, now_ts: float) -> list[str]:
+        """
+        Release tasks that were claimed but not reported within claim_ttl_sec.
+        Moves them back to PENDING and clears assigned_to / claimed_at.
+
+        Call this periodically (e.g. from runtime or a scheduler) with time.monotonic().
+
+        Returns:
+            List of task IDs that were released.
+        """
+        released = []
+        ttl_key = "claim_ttl_sec"
+        seen_ids = set(self.tasks.keys())
+        for key in self.store.list("task:"):
+            task_id = key[5:] if key.startswith("task:") else key
+            if task_id in seen_ids:
+                continue
+            seen_ids.add(task_id)
+            task = self.store.get(key)
+            if not task or task.state != TaskState.ASSIGNED or task.claimed_at is None:
+                continue
+            self.tasks[task_id] = task
+            ttl = task.constraints.get(ttl_key)
+            if ttl is None:
+                continue
+            try:
+                ttl_sec = float(ttl)
+            except (TypeError, ValueError):
+                continue
+            if now_ts - task.claimed_at >= ttl_sec:
+                task.state = TaskState.PENDING
+                task.assigned_to = None
+                task.claimed_at = None
+                self.pending_task_ids.add(task_id)
+                self.store.put(f"task:{task.id}", task)
+                released.append(task_id)
+        for task_id in list(self.tasks.keys()):
+            task = self.tasks[task_id]
+            if task.state != TaskState.ASSIGNED or task.claimed_at is None:
+                continue
+            ttl = task.constraints.get(ttl_key)
+            if ttl is None:
+                continue
+            try:
+                ttl_sec = float(ttl)
+            except (TypeError, ValueError):
+                continue
+            if now_ts - task.claimed_at >= ttl_sec:
+                task.state = TaskState.PENDING
+                task.assigned_to = None
+                task.claimed_at = None
+                self.pending_task_ids.add(task_id)
+                self.store.put(f"task:{task.id}", task)
+                released.append(task_id)
+        return released
 
     def report(self, agent_id: str, task_id: str, result: Any) -> None:
         """

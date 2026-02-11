@@ -87,5 +87,7 @@ class WebSocketTransport(Transport):
         frame = struct.pack("!I", length) + data
         await self._ws.send(frame)
 
-    async def receive(self) -> Message:
+    async def receive(self, timeout: float | None = None) -> Message:
+        if timeout is not None:
+            return await asyncio.wait_for(self.inbox.get(), timeout=timeout)
         return await self.inbox.get()

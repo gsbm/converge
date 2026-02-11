@@ -65,6 +65,15 @@ def test_file_store_list_with_prefix(tmp_path):
     assert store.list("c") == []
 
 
+def test_file_store_put_if_absent(tmp_path):
+    store = FileStore(str(tmp_path))
+    assert store.put_if_absent("key1", "a") is True
+    assert store.get("key1") == "a"
+    assert store.put_if_absent("key1", "b") is False
+    assert store.get("key1") == "a"
+    assert store.put_if_absent("key2", "c") is True
+
+
 def test_filestore_additional(tmp_path):
     store = FileStore(str(tmp_path))
     assert store.get("none") is None

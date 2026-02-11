@@ -93,7 +93,9 @@ class LocalTransport(Transport):
             if q is not None:
                 await q.put(message)
 
-    async def receive(self) -> Message:
+    async def receive(self, timeout: float | None = None) -> Message:
         if not self._started:
             raise RuntimeError("Transport not started")
+        if timeout is not None:
+            return await asyncio.wait_for(self.queue.get(), timeout=timeout)
         return await self.queue.get()

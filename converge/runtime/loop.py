@@ -73,6 +73,9 @@ class AgentRuntime:
         scheduler=None,
         executor_factory=None,
         executor_kwargs: dict[str, Any] | None = None,
+        health_check=None,
+        ready_check=None,
+        receive_timeout_sec: float | None = 30.0,
     ):
         """
         Initialize the agent runtime.
@@ -110,7 +113,14 @@ class AgentRuntime:
                 When provided, the runtime calls it in the run loop to obtain the executor instead of building StandardExecutor.
                 Use for custom executors or to inject extra dependencies.
             executor_kwargs: Optional dict of kwargs passed to StandardExecutor when executor_factory is not used
-                (e.g. custom_handlers, safety_policy, bidding_protocols). Ignored if executor_factory is set.
+                (e.g. custom_handlers, safety_policy, bidding_protocols, tool_timeout_sec, tool_allowlist).
+                Ignored if executor_factory is set.
+            health_check: Optional callable () -> bool. When set, is_healthy() delegates to it.
+                No built-in HTTP server; operators can poll from a sidecar or CLI.
+            ready_check: Optional callable () -> bool. When set, is_ready() delegates to it.
+            receive_timeout_sec: Optional timeout for transport.receive() so the loop can react to
+                shutdown. When set, receive() is called with this timeout; TimeoutError is caught and
+                the loop continues. None means no timeout (block until message).
         """
         self.agent = agent
         self.transport = transport
@@ -132,11 +142,26 @@ class AgentRuntime:
         self._last_checkpoint_ts: float = 0.0
         self.executor_factory = executor_factory
         self.executor_kwargs = executor_kwargs or {}
+        self._health_check = health_check
+        self._ready_check = ready_check
+        self.receive_timeout_sec = receive_timeout_sec
 
         from .scheduler import Scheduler
         self.pool_manager = pool_manager
         self.task_manager = task_manager
         self.scheduler = Scheduler() if scheduler is None else scheduler
+
+    def is_healthy(self) -> bool:
+        """Return health status. Delegates to health_check callable if set, else True."""
+        if self._health_check is not None:
+            return self._health_check()
+        return True
+
+    def is_ready(self) -> bool:
+        """Return readiness status. Delegates to ready_check callable if set, else True."""
+        if self._ready_check is not None:
+            return self._ready_check()
+        return True
 
     async def start(self) -> None:
         """Start the agent loop."""
@@ -195,13 +220,17 @@ class AgentRuntime:
         """Continuously receive messages from transport and push to inbox."""
         while self.running:
             try:
+                timeout = self.receive_timeout_sec
                 if self.identity_registry is not None:
-                    message = await self.transport.receive_verified(self.identity_registry)
+                    message = await self.transport.receive_verified(
+                        self.identity_registry,
+                        timeout=timeout,
+                    )
                     if message is None:
                         logger.debug("Dropping unverified message (unknown sender or bad signature)")
                         continue
                 else:
-                    message = await self.transport.receive()
+                    message = await self.transport.receive(timeout=timeout)
                 if self.metrics_collector:
                     self.metrics_collector.inc("messages_received")
                 if self.replay_log is not None:
@@ -210,6 +239,9 @@ class AgentRuntime:
                 self.scheduler.notify()
             except asyncio.CancelledError:
                 break
+            except TimeoutError:
+                # Receive timeout: loop again to check running flag
+                continue
             except Exception as e:
                 logger.warning("Error receiving message: %s", e)
                 await asyncio.sleep(1)

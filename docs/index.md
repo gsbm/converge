@@ -39,6 +39,8 @@ architecture/index
 - [CLI and configuration](user_guide/cli_and_config.md)
 - [API reference](api/index.md): [Project reference](api/project_reference.md) (module index)
 - [Architecture](architecture/index.md)
+- [Scaling and deployment](guides/scaling.md)
+- [Glossary](glossary.md)
 
 ## Requirements and status
 

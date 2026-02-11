@@ -56,13 +56,30 @@ async def test_local_transport_exchange(registry):
     await trans_a.send(msg)
 
     received = await trans_b.receive()
-
     assert received.id == msg.id
     assert received.sender == id_a.fingerprint
     assert received.payload["content"] == "hello from a"
 
     await trans_a.stop()
     await trans_b.stop()
+
+
+@pytest.mark.asyncio
+async def test_local_transport_receive_with_timeout(registry):
+    """receive(timeout) returns when message available within timeout; raises TimeoutError when no message."""
+    t = LocalTransport("agent1")
+    await t.start()
+    try:
+        # Timeout path: no message in queue
+        with pytest.raises(asyncio.TimeoutError):
+            await t.receive(timeout=0.02)
+        # Success path: put message then receive with timeout
+        msg = Message(sender="other", payload={"x": 1})
+        await t.queue.put(msg)
+        received = await t.receive(timeout=1.0)
+        assert received.payload == {"x": 1}
+    finally:
+        await t.stop()
 
 
 @pytest.mark.asyncio

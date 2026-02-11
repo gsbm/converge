@@ -51,7 +51,7 @@ All transports implement the same interface:
 
 - **`start()` / `stop()`**: Lifecycle.
 - **`send(message: Message)`**: Send a message (routing is transport-specific).
-- **`receive() -> Message`**: Receive one message (blocking until available).
+- **`receive(timeout=None) -> Message`**: Receive one message. If **timeout** is set, return within that many seconds or raise **TimeoutError** so the runtime can react (e.g. to shutdown). Default is blocking until available.
 
 Transports are hot-swappable and stateless from the runtime’s perspective. Implementations:
 
@@ -61,11 +61,16 @@ Transports are hot-swappable and stateless from the runtime’s perspective. Imp
 
 **Identity registry:** Transports that support verification (e.g. local) can use an `IdentityRegistry` (fingerprint → public key) to implement `receive_verified()` and discard or reject messages that fail verification.
 
+## Message delivery and reliability
+
+Delivery is **best-effort** by default: no built-in at-least-once or exactly-once guarantees. Recommend application-level acks, idempotent handlers, and optional retry wrappers. The runtime uses a configurable **receive timeout** (`receive_timeout_sec`) so the listen loop can wake up and check the running flag; on timeout it continues without error. **Inbox** supports **maxsize** and **drop_when_full**; when full and drop is enabled, new messages are dropped. See [Concepts](../user_guide/concepts.md) for reliability and idempotency patterns.
+
 ## State and persistence
 
 - Agent state is explicit (no global mutable singletons for business state).
-- **Store** abstraction: `put`, `get`, `delete`, `list(prefix)`. Used by PoolManager, TaskManager, and DiscoveryService when a store is supplied.
+- **Store** abstraction: `put`, `get`, `delete`, `list(prefix)`, and optional **put_if_absent** (atomic when overridden). Used by PoolManager, TaskManager, and DiscoveryService when a store is supplied.
 - **MemoryStore** and **FileStore** (extensions) provide in-memory and file-backed implementations. FileStore uses pickle and a directory per base path.
+- **Persistence and schema:** Stored values (Task, Pool, etc.) must be serializable (pickle for FileStore). Schema or version changes may require migration; consider a version field or stable serialization format when evolving types.
 
 **Recovery:** Pool and task state are restored on restart by constructing PoolManager and TaskManager with the **same store** used before shutdown. Inbox and in-flight messages are best-effort (no persistence unless the transport supports replay). The runtime supports an optional **checkpoint_store** and **checkpoint_interval_sec** to write `agent_id -> last_activity_ts` for observability; this does not change processing order or replay.
 

@@ -86,10 +86,25 @@ def test_agent_descriptor_to_dict_from_dict():
     desc = AgentDescriptor("id1", [Topic("ns", {})], [cap])
     d = desc.to_dict()
     assert d["id"] == "id1"
+    assert "public_key" not in d
     restored = AgentDescriptor.from_dict(d)
     assert restored.id == desc.id
     assert len(restored.capabilities) == 1
     assert restored.capabilities[0].name == "compute"
+    assert restored.public_key is None
+
+
+def test_agent_descriptor_public_key_roundtrip():
+    """AgentDescriptor with public_key serializes and deserializes correctly."""
+    import base64
+    cap = Capability("c", "1.0", "d")
+    key_bytes = b"x" * 32
+    desc = AgentDescriptor("id1", [Topic("ns", {})], [cap], public_key=key_bytes)
+    d = desc.to_dict()
+    assert "public_key" in d
+    assert base64.b64decode(d["public_key"].encode("ascii")) == key_bytes
+    restored = AgentDescriptor.from_dict(d)
+    assert restored.public_key == key_bytes
 
 
 def test_discovery_service_load_from_store_invalid_skipped():
@@ -130,6 +145,34 @@ def test_discovery_query_topics_capabilities():
     results2 = ds.query(DiscoveryQuery(capabilities=["compute"]), [desc1, desc2])
     assert len(results2) == 1
     assert results2[0].id == "id1"
+
+
+def test_discovery_register_then_query_returns_agent():
+    """After register(), query() with service descriptors returns the agent."""
+    cap = Capability("c", "1.0", "d")
+    desc = AgentDescriptor("id1", [Topic("ns", {})], [cap])
+    ds = DiscoveryService()
+    ds.register(desc)
+    candidates = list(ds.descriptors.values())
+    results = ds.query(DiscoveryQuery(), candidates)
+    assert len(results) == 1
+    assert results[0].id == "id1"
+
+
+def test_discovery_unregister_then_query_omits_agent():
+    """After unregister(), the agent is no longer in descriptors so query omits it."""
+    cap = Capability("c", "1.0", "d")
+    desc1 = AgentDescriptor("id1", [Topic("ns1", {})], [cap])
+    desc2 = AgentDescriptor("id2", [Topic("ns2", {})], [cap])
+    ds = DiscoveryService()
+    ds.register(desc1)
+    ds.register(desc2)
+    candidates_before = list(ds.descriptors.values())
+    assert len(candidates_before) == 2
+    ds.unregister("id1")
+    candidates_after = list(ds.descriptors.values())
+    assert len(candidates_after) == 1
+    assert candidates_after[0].id == "id2"
 
 
 def test_discovery_register_persists_to_store():

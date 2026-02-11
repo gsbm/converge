@@ -18,6 +18,10 @@ class Message:
     """
     A cryptographically signed, immutable communication unit.
 
+    Payload can be arbitrary. For streaming or long-running responses, conventions:
+    use ``payload["streaming"]`` for streamed content or ``payload["progress"]``
+    for progress updates (e.g. for UIs).
+
     Attributes:
         id (str): Unique message identifier.
         sender (str): Fingerprint of the sending agent.

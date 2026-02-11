@@ -1,3 +1,14 @@
+"""
+Discovery service for finding agents by topic and capability.
+
+Agents register with the discovery service on runtime start() and unregister
+on stop(). Peers query by DiscoveryQuery (topics, capabilities) and receive
+matching AgentDescriptors. When a store is provided, descriptors are persisted
+so they survive process restarts. AgentDescriptor can include public_key for
+message verification; callers that want verified receive can populate
+IdentityRegistry from query results (identity_registry.register(d.id, d.public_key)).
+"""
+import base64
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,13 +26,20 @@ class DiscoveryQuery:
 
 @dataclass
 class AgentDescriptor:
+    """
+    Descriptor of an agent for discovery and optional verification.
+
+    id, topics, and capabilities are used for query matching. public_key, when set,
+    is used by peers to verify message signatures (register in IdentityRegistry).
+    """
     id: str
     topics: list[Topic]
     capabilities: list[Capability]
+    public_key: bytes | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize for persistence."""
-        return {
+        """Serialize for persistence. public_key is base64-encoded if present."""
+        out: dict[str, Any] = {
             "id": self.id,
             "topics": [t.to_dict() for t in self.topics],
             "capabilities": [
@@ -36,10 +54,13 @@ class AgentDescriptor:
                 for c in self.capabilities
             ],
         }
+        if self.public_key is not None:
+            out["public_key"] = base64.b64encode(self.public_key).decode("ascii")
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentDescriptor":
-        """Deserialize from stored dict."""
+        """Deserialize from stored dict. public_key is decoded from base64 if present."""
         topics = [Topic.from_dict(t) for t in data.get("topics", [])]
         caps_data = data.get("capabilities", [])
         capabilities = [
@@ -53,7 +74,15 @@ class AgentDescriptor:
             )
             for c in caps_data
         ]
-        return cls(id=data.get("id", ""), topics=topics, capabilities=capabilities)
+        public_key = None
+        if "public_key" in data and data["public_key"]:
+            public_key = base64.b64decode(data["public_key"].encode("ascii"))
+        return cls(
+            id=data.get("id", ""),
+            topics=topics,
+            capabilities=capabilities,
+            public_key=public_key,
+        )
 
 
 _DISCOVERY_PREFIX = "discovery:agent:"

@@ -2,6 +2,10 @@
 
 Core abstractions: agent, identity, message, topic, task, pool, capability, store, and decisions. These types are used everywhere: identity and messages for communication, topics for routing and discovery, tasks and pools for coordination, capabilities for discovery, store for persistence, and decisions as the output of the agent’s `decide()` and input to the executor.
 
+**Task routing:** Tasks can optionally set `pool_id`, `topic`, and `required_capabilities`. Only agents in the given pool and with the required capabilities see the task when the runtime uses scoped task listing (see coordination and runtime).
+
+**Tools and actions:** Agents can emit an **InvokeTool** decision (`tool_name`, `params`). The runtime’s executor looks up the tool in an optional **ToolRegistry** (see `converge.core.tools`) and runs it; implement the **Tool** protocol (`name`, `run(params)`).
+
 ```{eval-rst}
 .. automodule:: converge.core.agent
    :members:
@@ -44,6 +48,11 @@ Core abstractions: agent, identity, message, topic, task, pool, capability, stor
    :show-inheritance:
 
 .. automodule:: converge.core.decisions
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: converge.core.tools
    :members:
    :undoc-members:
    :show-inheritance:

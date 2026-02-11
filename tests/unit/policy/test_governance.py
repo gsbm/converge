@@ -8,7 +8,8 @@ def test_governance_models():
     assert "leader1" in dg.resolve_dispute(None)
 
     dem = DemocraticGovernance()
-    assert "vote" in dem.resolve_dispute(None)
+    assert dem.resolve_dispute({"votes": ["A", "A", "B"]}) == "A"
+    assert dem.resolve_dispute({"votes": []}) is None
 
 
 def test_governance_abstract():

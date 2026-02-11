@@ -23,6 +23,8 @@ class Pool:
     admission_policy_instance: Any = field(default=None, repr=False)
     governance: dict[str, Any] = field(default_factory=dict)
     agents: set[str] = field(default_factory=set)
+    trust_model: Any = field(default=None, repr=False)
+    trust_threshold: float = 0.0
 
     def add_agent(self, agent_id: str) -> None:
         """Add an agent to the pool."""

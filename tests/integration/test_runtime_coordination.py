@@ -105,6 +105,49 @@ async def test_runtime_additional_decisions():
 
 
 @pytest.mark.asyncio
+async def test_runtime_scoped_tasks_by_pool_and_capabilities():
+    """Agent with pool_manager only sees pending tasks for its pool and capabilities."""
+    id_a = Identity.generate()
+    pm = PoolManager()
+    tm = TaskManager()
+    transport = LocalTransport(id_a.fingerprint)
+    pool = pm.create_pool({})
+    pm.join_pool(id_a.fingerprint, pool.id)
+
+    task_in_scope = Task(pool_id=pool.id, required_capabilities=["compute"], objective={"job": "1"})
+    task_out_scope = Task(pool_id=pool.id, required_capabilities=["gpu"], objective={"job": "2"})
+    tm.submit(task_in_scope)
+    tm.submit(task_out_scope)
+
+    class RecordingAgent(Agent):
+        def __init__(self, identity):
+            super().__init__(identity)
+            self.seen = []
+
+        def decide(self, messages, tasks):
+            self.seen.extend(tasks)
+            return []
+
+    rec_agent = RecordingAgent(id_a)
+    rec_agent.capabilities = ["compute"]
+    runtime = AgentRuntime(
+        agent=rec_agent,
+        transport=transport,
+        pool_manager=pm,
+        task_manager=tm,
+    )
+    await runtime.start()
+    # Trigger one loop iteration with work
+    runtime.scheduler.notify()
+    await asyncio.sleep(0.3)
+    await runtime.stop()
+
+    # Agent should see only the task matching its pool and capabilities
+    assert len(rec_agent.seen) == 1
+    assert rec_agent.seen[0].id == task_in_scope.id
+
+
+@pytest.mark.asyncio
 async def test_pool_manager_persistence():
     from converge.extensions.storage.memory import MemoryStore
 

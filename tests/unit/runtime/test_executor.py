@@ -7,13 +7,21 @@ import pytest
 from converge.coordination.pool_manager import PoolManager
 from converge.coordination.task_manager import TaskManager
 from converge.core.decisions import (
+    AcceptProposal,
     ClaimTask,
     CreatePool,
+    Delegate,
+    InvokeTool,
     JoinPool,
     LeavePool,
+    Propose,
+    RejectProposal,
     ReportTask,
+    RevokeDelegation,
     SendMessage,
+    SubmitBid,
     SubmitTask,
+    Vote,
 )
 from converge.core.identity import Identity
 from converge.core.message import Message
@@ -182,3 +190,91 @@ async def test_executor_send_message_network_none():
     msg = Message(sender="agent1", payload={"x": 1})
     await executor.execute([SendMessage(message=msg)])
     # No crash; network.send never called
+
+
+@pytest.mark.asyncio
+async def test_executor_coordination_decisions():
+    """SubmitBid, Vote, Propose, AcceptProposal, RejectProposal, Delegate, RevokeDelegation."""
+    from converge.coordination.bidding import BiddingProtocol
+    from converge.coordination.delegation import DelegationProtocol
+    from converge.coordination.negotiation import NegotiationProtocol
+
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+    bidding = BiddingProtocol()
+    negotiation = NegotiationProtocol()
+    delegation = DelegationProtocol()
+    votes_store = {}
+
+    executor = StandardExecutor(
+        "agent1",
+        network,
+        tm,
+        pm,
+        bidding_protocols={"auc1": bidding},
+        negotiation_protocol=negotiation,
+        delegation_protocol=delegation,
+        votes_store=votes_store,
+    )
+
+    await executor.execute([SubmitBid(auction_id="auc1", amount=10.0, content={"sla": 1})])
+    assert bidding.bids.get("agent1") == 10.0
+
+    await executor.execute([Vote(vote_id="v1", option="A")])
+    assert votes_store.get("v1") == [("agent1", "A")]
+
+    session_id = negotiation.create_session("agent1", ["agent2"], initial_proposal={"x": 1})
+    await executor.execute([Propose(session_id=session_id, proposal_content={"x": 2})])
+    await executor.execute([AcceptProposal(session_id=session_id)])
+    assert negotiation.get_session(session_id).state.value == "accepted"
+
+    sid2 = negotiation.create_session("agent1", ["agent2"], initial_proposal={})
+    await executor.execute([RejectProposal(session_id=sid2)])
+    assert negotiation.get_session(sid2).state.value == "rejected"
+
+    await executor.execute([Delegate(delegatee_id="agent2", scope=["topic:a"])])
+    assert len(delegation.delegations) == 1
+    did = next(iter(delegation.delegations))
+    await executor.execute([RevokeDelegation(delegation_id=did)])
+    assert delegation.delegations[did]["active"] is False
+
+
+@pytest.mark.asyncio
+async def test_executor_invoke_tool():
+    """InvokeTool runs the tool from tool_registry with params."""
+    from converge.core.tools import ToolRegistry
+
+    class RecordingTool:
+        @property
+        def name(self) -> str:
+            return "rec"
+
+        def run(self, params: dict):
+            self.called = params
+            return "ok"
+
+    tool = RecordingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+    executor = StandardExecutor("agent1", network, tm, pm, tool_registry=registry)
+
+    await executor.execute([InvokeTool(tool_name="rec", params={"x": 1})])
+    assert getattr(tool, "called", None) == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_executor_invoke_tool_unknown_ignored():
+    """InvokeTool with unknown tool name does not raise when tool_registry is set."""
+    from converge.core.tools import ToolRegistry
+
+    registry = ToolRegistry()
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+    executor = StandardExecutor("agent1", network, tm, pm, tool_registry=registry)
+    await executor.execute([InvokeTool(tool_name="nonexistent", params={})])

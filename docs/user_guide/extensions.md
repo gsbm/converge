@@ -43,7 +43,7 @@ pip install "converge[llm]"
 - **`AnthropicProvider(api_key=None, model="claude-sonnet-4-20250514")`**: Anthropic API.
 - **`MistralProvider(api_key=None, model="mistral-small-latest")`**: Mistral AI API.
 
-The provider must implement `chat(messages: list[dict], **kwargs) -> str`. The LLM is expected to return a JSON array of decision objects. Supported decision types in the prompt: `SendMessage`, `JoinPool`, `LeavePool`, `ClaimTask`, `SubmitTask`. Message format: `{"type": "SendMessage", "message": {"sender": "<id>", "topics": [], "payload": {...}}}`. Task format for SubmitTask: `{"id": "<id>", "objective": {...}, "inputs": {...}}`.
+The provider must implement `chat(messages: list[dict], **kwargs) -> str`. Optionally, providers can implement `chat_stream(messages, **kwargs) -> AsyncIterator[str]` to yield tokens incrementally for streaming or progress; when present, callers can use it for streaming UIs or progress messages. Message payload convention for streaming: use `payload["streaming"]` or `payload["progress"]` for UI hints. The LLM is expected to return a JSON array of decision objects. Supported decision types in the prompt: `SendMessage`, `JoinPool`, `LeavePool`, `ClaimTask`, `SubmitTask`. Message format: `{"type": "SendMessage", "message": {"sender": "<id>", "topics": [], "payload": {...}}}`. Task format for SubmitTask: `{"id": "<id>", "objective": {...}, "inputs": {...}}`.
 
 Example:
 

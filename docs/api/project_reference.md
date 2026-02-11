@@ -21,7 +21,8 @@ Compact index of public modules and their role. For full signatures and docstrin
 | `converge.core.pool` | Pool: id, topics, agents, add_agent/remove_agent. |
 | `converge.core.capability` | Capability and CapabilitySet: name, version, description, constraints, costs. |
 | `converge.core.store` | Store ABC: put, get, delete, list. |
-| `converge.core.decisions` | Decision types: SendMessage, JoinPool, LeavePool, CreatePool, SubmitTask, ClaimTask, ReportTask. |
+| `converge.core.decisions` | Decision types: SendMessage, JoinPool, LeavePool, CreatePool, SubmitTask, ClaimTask, ReportTask, SubmitBid, Vote, Propose, AcceptProposal, RejectProposal, Delegate, RevokeDelegation, InvokeTool. |
+| `converge.core.tools` | Tool protocol, ToolRegistry: register, get, list_names; for InvokeTool execution. |
 
 ## converge.network
 
@@ -50,9 +51,9 @@ Compact index of public modules and their role. For full signatures and docstrin
 
 | Module | Role |
 |--------|------|
-| `converge.runtime.loop` | AgentRuntime, Inbox: start/stop, _listen_transport, _run_loop, _execute_decision_fallback. |
+| `converge.runtime.loop` | AgentRuntime, Inbox: start/stop, discovery/identity_registry/replay_log/checkpoint_store/tool_registry. |
 | `converge.runtime.scheduler` | Scheduler: notify, wait_for_work(timeout). |
-| `converge.runtime.executor` | Executor protocol, StandardExecutor: execute(SendMessage, SubmitTask, ClaimTask, JoinPool, LeavePool, CreatePool, ReportTask). |
+| `converge.runtime.executor` | Executor protocol, StandardExecutor: execute decisions including SendMessage, SubmitTask, ClaimTask, JoinPool, LeavePool, CreatePool, ReportTask, coordination (SubmitBid, Vote, Propose, etc.), InvokeTool; optional tool_registry, replay_log, safety_policy. |
 
 ## converge.policy
 

@@ -51,8 +51,13 @@ A **task** is a unit of work with:
 - Id, objective, inputs, optional outputs.
 - State: PENDING → ASSIGNED → COMPLETED (and optional evaluator).
 - Optional assignment and result.
+- **Routing** (optional): `pool_id`, `topic`, and `required_capabilities` restrict which agents see the task. When the runtime has a pool manager, it calls `list_pending_tasks_for_agent` so each agent only sees tasks for its pools and capabilities.
 
 Tasks are first-class: submitted to a **task manager**, claimed by agents, and reported via decisions. The task manager can use a **store** for persistence (e.g. in-memory or file-backed).
+
+## Tools and actions
+
+Agents can perform **tool invocations** by emitting an **InvokeTool** decision (`tool_name`, `params`). The runtime’s **StandardExecutor** uses an optional **ToolRegistry** (see `converge.core.tools`): when an InvokeTool is executed, the executor looks up the tool by name and runs `tool.run(params)`. Implement the **Tool** protocol (property `name`, method `run(params) -> Any`) and register tools on a **ToolRegistry**; pass the registry to **AgentRuntime** as `tool_registry` so the executor can run them. Results are not automatically sent back; the agent can emit **ReportTask** or **SendMessage** to report outcomes.
 
 ## Pool
 
@@ -82,6 +87,7 @@ The agent’s `decide(messages, tasks)` returns a list of **decisions**. The run
 | `SubmitTask(task=...)` | Submit a task (via task manager). |
 | `ClaimTask(task_id)` | Claim a pending task. |
 | `ReportTask(task_id, result)` | Report task result and mark completed. |
+| `SubmitBid`, `Vote`, `Propose`, `AcceptProposal`, `RejectProposal`, `Delegate`, `RevokeDelegation` | Coordination: bidding, voting, negotiation, delegation (executor uses optional protocols). |
 
 See `converge.core.decisions` in the [API reference](../api/core.md).
 
@@ -89,13 +95,22 @@ See `converge.core.decisions` in the [API reference](../api/core.md).
 
 Trust is non-binary and contextual. The **trust model** (`converge.policy.trust`) maintains per-agent scores, updatable from outcomes; discovery queries can use a trust threshold. Trust is computed from history where applicable, not only declared.
 
-## Discovery
+## Message verification and identity bootstrapping
 
-The **discovery service** holds **agent descriptors** (id, topics, capabilities). It can load/save descriptors from a **store** and answers **queries** (by topics and/or capabilities) over a candidate list. The **network** (`AgentNetwork`) wraps a transport and local agent set and exposes `discover(query)` using descriptors registered with it.
+When an **IdentityRegistry** is passed to **AgentRuntime**, the runtime uses **receive_verified()** and only pushes messages that verify against the sender’s public key; unverified messages are dropped (log at debug). Populate the registry from discovery: include **public_key** in **AgentDescriptor** when registering (e.g. via **build_descriptor**, which adds the agent’s identity public key), then after querying, call **identity_registry.register(d.id, d.public_key)** for each descriptor so received messages can be verified.
+
+## Discovery and registration
+
+The **discovery service** holds **agent descriptors** (id, topics, capabilities, optional public_key). It can load/save descriptors from a **store** and answers **queries** (by topics and/or capabilities) over a candidate list. Agents **register on runtime start** and **unregister on stop**: when you pass `discovery_service` (and optionally `agent_descriptor`) to `AgentRuntime`, the runtime registers the agent at start so peers can find it by topic/capability, and unregisters it at stop. Use `build_descriptor(agent)` from `converge.network.network` to build a descriptor from an agent’s id, topics, and capabilities when you do not provide one. The **network** (`AgentNetwork`) wraps a transport and local agent set and exposes `discover(query)` using descriptors registered with it.
 
 ## Governance and safety
 
-- **Pools** enforce local rules (admission, governance model).
+- **Pools** enforce local rules (admission, governance model, optional trust threshold). When a pool has **trust_model** and **trust_threshold**, join is allowed only if the agent’s trust score is at least the threshold.
+- **Policy enforcement in the executor:** When **StandardExecutor** is given a **safety_policy** (ResourceLimits, ActionPolicy), it checks ActionPolicy before each decision (only allowed types run) and validates task resource constraints (cpu, memory_mb) for SubmitTask/ClaimTask.
 - **Policy** modules provide admission (open, whitelist, token), trust, governance (e.g. democratic, dictatorial), and safety (resource limits, action allowlists). See [Architecture/Process model](../architecture/process_model.md) and [API/policy](../api/policy.md).
+
+## Recovery
+
+**Pool and task state** are persisted in the **Store** used by PoolManager and TaskManager. On restart, create PoolManager and TaskManager with the **same store** (e.g. FileStore with the same path) so pools and tasks are restored. The **inbox** is not persisted; message replay is best-effort unless the transport supports it. The runtime’s optional **checkpoint_store** and **checkpoint_interval_sec** write a lightweight checkpoint (e.g. agent_id → last_activity_ts) for observability; they do not change processing or replay semantics.
 
 For the full API and process model, see [Architecture](../architecture/index.md) and the [API reference](../api/index.md).

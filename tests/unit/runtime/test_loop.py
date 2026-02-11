@@ -9,6 +9,7 @@ from converge.coordination.pool_manager import PoolManager
 from converge.core.agent import Agent
 from converge.core.identity import Identity
 from converge.core.message import Message
+from converge.network.identity_registry import IdentityRegistry
 from converge.network.transport.local import LocalTransport
 from converge.runtime.loop import AgentRuntime, Inbox
 
@@ -268,6 +269,40 @@ async def test_execute_decision_fallback_non_message():
         pass
     await runtime._execute_decision_fallback(NotAMessage())
     await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_receive_verified_path_called():
+    """When identity_registry is set, receive_verified is used and unverified (None) is not pushed."""
+    identity = Identity.generate()
+    agent = Agent(identity)
+    registry = IdentityRegistry()
+    registry.register(identity.fingerprint, identity.public_key)
+
+    call_count = [0]
+
+    class TransportWithVerified:
+        async def receive_verified(self, _reg):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return
+            await asyncio.Future()
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+    transport = TransportWithVerified()
+    runtime = AgentRuntime(agent, transport, identity_registry=registry)
+    await runtime.start()
+    await asyncio.sleep(0.15)
+    await runtime.stop()
+
+    assert call_count[0] >= 1
+    messages = runtime.inbox.poll(batch_size=10)
+    assert len(messages) == 0
 
 
 @pytest.mark.asyncio

@@ -65,3 +65,31 @@ def test_pool_manager_persistence():
     pool2 = pm2.get_pool("p1")
     assert pool2 is not None
     assert pool2.id == "p1"
+
+
+def test_recovery_same_store_restores_pool_and_task_state():
+    """Restarting with the same store restores pool and task state (recovery)."""
+    from converge.coordination.task_manager import TaskManager
+    from converge.core.task import Task
+
+    store = MemoryStore()
+    pm = PoolManager(store)
+    tm = TaskManager(store)
+
+    pool = pm.create_pool({"id": "recovery-pool"})
+    pm.join_pool("agent1", pool.id)
+    task = Task(objective={"goal": "test"}, inputs={})
+    task_id = tm.submit(task)
+
+    # Simulate restart: new managers with same store
+    pm2 = PoolManager(store)
+    tm2 = TaskManager(store)
+
+    pool2 = pm2.get_pool("recovery-pool")
+    assert pool2 is not None
+    assert "agent1" in pool2.agents
+
+    # Task state is in store; get_task loads it
+    restored = tm2.get_task(task_id)
+    assert restored is not None
+    assert restored.objective == {"goal": "test"}

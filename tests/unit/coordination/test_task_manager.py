@@ -145,3 +145,67 @@ def test_task_manager_get_task_from_store_non_pending_does_not_add_to_pending():
     assert loaded is not None
     assert loaded.state == TaskState.ASSIGNED
     assert task.id not in tm2.pending_task_ids
+
+
+def test_list_pending_tasks_for_agent_no_filter_returns_all():
+    """When pool_ids and capabilities are None, all pending tasks are returned."""
+    tm = TaskManager()
+    t1 = Task()
+    t2 = Task(pool_id="p1", required_capabilities=["x"])
+    tm.submit(t1)
+    tm.submit(t2)
+    result = tm.list_pending_tasks_for_agent("agent1", pool_ids=None, capabilities=None)
+    assert len(result) == 2
+
+
+def test_list_pending_tasks_for_agent_filter_by_pool():
+    """Tasks with pool_id are only included when agent is in that pool."""
+    tm = TaskManager()
+    t1 = Task(pool_id="pool_a")
+    t2 = Task(pool_id="pool_b")
+    t3 = Task()  # no pool
+    tm.submit(t1)
+    tm.submit(t2)
+    tm.submit(t3)
+    # Agent in pool_a only
+    result = tm.list_pending_tasks_for_agent("agent1", pool_ids=["pool_a"], capabilities=None)
+    assert len(result) == 2  # t1 and t3 (no pool)
+    ids = {t.id for t in result}
+    assert t1.id in ids
+    assert t3.id in ids
+    assert t2.id not in ids
+
+
+def test_list_pending_tasks_for_agent_filter_by_capabilities():
+    """Tasks with required_capabilities are only included when agent has all of them."""
+    tm = TaskManager()
+    t1 = Task(required_capabilities=["a", "b"])
+    t2 = Task(required_capabilities=["a"])
+    t3 = Task()
+    tm.submit(t1)
+    tm.submit(t2)
+    tm.submit(t3)
+    result = tm.list_pending_tasks_for_agent("agent1", pool_ids=None, capabilities=["a", "b"])
+    assert len(result) == 3
+    result_missing = tm.list_pending_tasks_for_agent("agent2", pool_ids=None, capabilities=["a"])
+    assert len(result_missing) == 2  # t2 and t3, not t1
+    ids_missing = {t.id for t in result_missing}
+    assert t1.id not in ids_missing
+
+
+def test_list_pending_tasks_for_agent_combined_filters():
+    """Pool and capability filters are both applied."""
+    tm = TaskManager()
+    t1 = Task(pool_id="p1", required_capabilities=["x"])
+    t2 = Task(pool_id="p1")
+    t3 = Task(pool_id="p2", required_capabilities=["x"])
+    tm.submit(t1)
+    tm.submit(t2)
+    tm.submit(t3)
+    result = tm.list_pending_tasks_for_agent("a1", pool_ids=["p1", "p2"], capabilities=["x"])
+    assert len(result) == 3
+    result_p1_only = tm.list_pending_tasks_for_agent("a2", pool_ids=["p1"], capabilities=["x"])
+    ids_p1 = {t.id for t in result_p1_only}
+    assert t1.id in ids_p1
+    assert t2.id in ids_p1
+    assert t3.id not in ids_p1

@@ -116,3 +116,48 @@ class TaskManager:
             List[Task]: A list of pending tasks.
         """
         return [self.tasks[tid] for tid in self.pending_task_ids if tid in self.tasks]
+
+    def list_pending_tasks_for_agent(
+        self,
+        agent_id: str,
+        pool_ids: list[str] | None = None,
+        capabilities: list[str] | None = None,
+    ) -> list[Task]:
+        """
+        List pending tasks visible to an agent given its pool membership and capabilities.
+
+        Tasks are filtered so that: if a task has pool_id set, the agent must be in that
+        pool (pool_id in pool_ids); if a task has required_capabilities, the agent must
+        have all of them (required_capabilities subset of capabilities). When pool_ids
+        or capabilities is None, that filter is not applied (backward compatible).
+
+        Args:
+            agent_id (str): The agent fingerprint (used for consistency; filtering is by
+                pool_ids and capabilities).
+            pool_ids (List[str] | None): Pool IDs the agent has joined. If None, pool_id
+                filter is not applied.
+            capabilities (List[str] | None): Capability names the agent has. If None,
+                required_capabilities filter is not applied.
+
+        Returns:
+            List[Task]: Pending tasks that the agent is allowed to see.
+        """
+        pending = self.list_pending_tasks()
+        result = []
+        agent_cap_set = set(capabilities) if capabilities is not None else None
+        agent_pool_set = set(pool_ids) if pool_ids is not None else None
+        for task in pending:
+            if (
+                task.pool_id is not None
+                and agent_pool_set is not None
+                and task.pool_id not in agent_pool_set
+            ):
+                continue
+            if (
+                task.required_capabilities
+                and agent_cap_set is not None
+                and not set(task.required_capabilities).issubset(agent_cap_set)
+            ):
+                continue
+            result.append(task)
+        return result

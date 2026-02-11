@@ -39,6 +39,7 @@ while running:
 ```
 
 - No hidden background threads; asyncio-driven.
+- When a **discovery service** is supplied, the runtime registers the agent on start and unregisters on stop so peers can find it by topic/capability.
 - **Inbox** buffers messages; supports bounded size and optional drop-when-full.
 - **Executor** (when pool_manager and task_manager are set) handles SendMessage, SubmitTask, ClaimTask, JoinPool, LeavePool, CreatePool, ReportTask; unknown types are logged.
 - **Fallback:** When no executor is configured, only message-like decisions are signed and sent on the transport; other types are no-ops.
@@ -66,6 +67,8 @@ Transports are hot-swappable and stateless from the runtime’s perspective. Imp
 - **Store** abstraction: `put`, `get`, `delete`, `list(prefix)`. Used by PoolManager, TaskManager, and DiscoveryService when a store is supplied.
 - **MemoryStore** and **FileStore** (extensions) provide in-memory and file-backed implementations. FileStore uses pickle and a directory per base path.
 
+**Recovery:** Pool and task state are restored on restart by constructing PoolManager and TaskManager with the **same store** used before shutdown. Inbox and in-flight messages are best-effort (no persistence unless the transport supports replay). The runtime supports an optional **checkpoint_store** and **checkpoint_interval_sec** to write `agent_id -> last_activity_ts` for observability; this does not change processing order or replay.
+
 ## CLI
 
-The CLI (`converge run`) generates an identity, creates a default Agent and LocalTransport, and runs an AgentRuntime until interrupted. Config is read from environment variables and, if the `cli` extra is installed, from an optional YAML or TOML file. See [CLI and configuration](../user_guide/cli_and_config.md).
+The CLI (`converge run`) can run one or more agents with configurable transport (local or TCP), optional pool and discovery store. Config is read from environment variables and, if the `cli` extra is installed, from an optional YAML or TOML file. Keys include `transport`, `host`, `port`, `agents`, `pool_id`, and `discovery_store`. See [CLI and configuration](../user_guide/cli_and_config.md).

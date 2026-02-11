@@ -4,9 +4,12 @@ import asyncio
 from unittest.mock import MagicMock
 
 from converge.core.agent import Agent
+from converge.core.capability import Capability
 from converge.core.identity import Identity
 from converge.core.message import Message
-from converge.network.network import AgentNetwork
+from converge.core.topic import Topic
+from converge.network.discovery import AgentDescriptor
+from converge.network.network import AgentNetwork, build_descriptor
 
 
 class MockTransport:
@@ -56,3 +59,32 @@ def test_network_send_broadcast_delegates_to_transport():
 def test_network_unregister_branch():
     net = AgentNetwork(MagicMock())
     net.unregister_agent("non-existent")
+
+
+def test_build_descriptor_from_agent():
+    """build_descriptor produces AgentDescriptor with id, topics, capabilities."""
+    identity = Identity.generate()
+    agent = Agent(identity)
+    agent.topics = [Topic(namespace="ns1", attributes={})]
+    agent.capabilities = ["cap_a", "cap_b"]
+
+    desc = build_descriptor(agent)
+    assert isinstance(desc, AgentDescriptor)
+    assert desc.id == agent.id
+    assert len(desc.topics) == 1
+    assert desc.topics[0].namespace == "ns1"
+    assert len(desc.capabilities) == 2
+    assert desc.capabilities[0].name == "cap_a"
+    assert desc.capabilities[1].name == "cap_b"
+
+
+def test_build_descriptor_with_capability_objects():
+    """build_descriptor accepts Capability objects in agent.capabilities."""
+    identity = Identity.generate()
+    agent = Agent(identity)
+    agent.capabilities = [Capability("x", "2.0", "desc")]
+
+    desc = build_descriptor(agent)
+    assert len(desc.capabilities) == 1
+    assert desc.capabilities[0].name == "x"
+    assert desc.capabilities[0].version == "2.0"

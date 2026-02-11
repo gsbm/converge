@@ -1,9 +1,13 @@
 """Tests for converge.cli and converge.__main__."""
 
 import os
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
-from converge.cli import _load_config, main
+import pytest
+
+from converge.cli import _create_transport, _load_config, main
 
 
 def test_cli_main_run():
@@ -20,9 +24,76 @@ def test_cli_main_run():
 
 def test_cli_load_config_env():
     os.environ["CONVERGE_TRANSPORT"] = "local"
-    cfg = _load_config(None)
-    assert cfg.get("transport") == "local"
-    del os.environ["CONVERGE_TRANSPORT"]
+    try:
+        cfg = _load_config(None)
+        assert cfg.get("transport") == "local"
+    finally:
+        os.environ.pop("CONVERGE_TRANSPORT", None)
+
+
+def test_cli_load_config_env_agents_port_pool_discovery():
+    os.environ["CONVERGE_AGENTS"] = "3"
+    os.environ["CONVERGE_PORT"] = "9999"
+    os.environ["CONVERGE_POOL_ID"] = "my-pool"
+    os.environ["CONVERGE_DISCOVERY_STORE"] = "memory"
+    try:
+        cfg = _load_config(None)
+        assert cfg.get("agents") == 3
+        assert cfg.get("port") == 9999
+        assert cfg.get("pool_id") == "my-pool"
+        assert cfg.get("discovery_store") == "memory"
+    finally:
+        for k in ("CONVERGE_AGENTS", "CONVERGE_PORT", "CONVERGE_POOL_ID", "CONVERGE_DISCOVERY_STORE"):
+            os.environ.pop(k, None)
+
+
+def test_cli_load_config_file_yaml():
+    import importlib.util
+
+    if importlib.util.find_spec("yaml") is None:
+        pytest.skip("pyyaml not available")
+    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+        f.write(b"transport: tcp\nhost: 0.0.0.0\nport: 9000\nagents: 2\n")
+        f.flush()
+        path = f.name
+    try:
+        cfg = _load_config(path)
+        assert cfg.get("transport") == "tcp"
+        assert cfg.get("host") == "0.0.0.0"
+        assert cfg.get("port") == 9000
+        assert cfg.get("agents") == 2
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_cli_load_config_file_toml():
+    import importlib.util
+
+    if importlib.util.find_spec("tomllib") is None:
+        pytest.skip("tomllib not available")
+    with tempfile.NamedTemporaryFile(suffix=".toml", delete=False) as f:
+        f.write(b'transport = "websocket"\nport = 7000\n')
+        f.flush()
+        path = f.name
+    try:
+        cfg = _load_config(path)
+        assert cfg.get("transport") == "websocket"
+        assert cfg.get("port") == 7000
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_create_transport_local():
+    from converge.network.transport.local import LocalTransport
+    t = _create_transport("local", "agent-1", "127.0.0.1", 8888)
+    assert isinstance(t, LocalTransport)
+
+
+def test_create_transport_tcp():
+    from converge.network.transport.tcp import TcpTransport
+    t = _create_transport("tcp", "agent-1", "127.0.0.1", 8888)
+    assert isinstance(t, TcpTransport)
+    assert t.port == 8888
 
 
 def test_main_module():

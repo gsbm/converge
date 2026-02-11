@@ -121,3 +121,31 @@ def test_pool_manager_join_with_accepting_policy():
         "admission_policy": AcceptPolicy(),
     })
     assert pm.join_pool("agent1", "p1") is True
+
+
+def test_pool_manager_join_pool_trust_threshold():
+    """join_pool rejects agent when trust_model.get_trust(agent_id) < trust_threshold."""
+    from converge.policy.trust import TrustModel
+
+    pm = PoolManager()
+    trust = TrustModel()
+    trust.update_trust("agent1", 0.3)
+    trust.update_trust("agent2", -0.5)
+    pool = pm.create_pool({"id": "p1", "trust_model": trust, "trust_threshold": 0.5})
+    assert pm.join_pool("agent1", "p1") is True
+    assert pm.join_pool("agent2", "p1") is False
+    assert "agent2" not in pool.agents
+
+
+def test_pool_manager_get_pools_for_agent():
+    """get_pools_for_agent returns pool IDs the agent has joined."""
+    pm = PoolManager()
+    p1 = pm.create_pool({"id": "p1"})
+    p2 = pm.create_pool({"id": "p2"})
+    pm.join_pool("agent1", p1.id)
+    pm.join_pool("agent1", p2.id)
+    pm.join_pool("agent2", p1.id)
+
+    assert set(pm.get_pools_for_agent("agent1")) == {"p1", "p2"}
+    assert pm.get_pools_for_agent("agent2") == ["p1"]
+    assert pm.get_pools_for_agent("agent3") == []

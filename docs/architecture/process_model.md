@@ -5,7 +5,7 @@
 1. **Task submitted**: A task is created and submitted to the task manager (optionally persisted in a store).
 2. **Pool formation**: Pools are created (with optional admission policy and governance model). Agents join or leave via decisions.
 3. **Negotiation**: Agents negotiate (e.g. via NegotiationProtocol: propose, counter, accept, reject). Consensus (majority/plurality) and bidding/delegation protocols are available for coordination.
-4. **Execution**: The runtime executes decisions: send messages, submit/claim/report tasks, join/leave/create pools. The executor applies decisions to the network and managers.
+4. **Execution**: The runtime executes decisions: send messages, submit/claim/report tasks, join/leave/create pools, and **coordination decisions** (SubmitBid, Vote, Propose, AcceptProposal, RejectProposal, Delegate, RevokeDelegation) when the executor is configured with the corresponding protocols and votes_store. The executor applies decisions to the network and managers.
 5. **Evaluation**: Task results are reported; trust and metrics can be updated.
 6. **Trust update**: Trust model scores can be updated from outcomes (see `converge.policy.trust`).
 7. **Archival**: Tasks and pool state can be persisted via the store; replay and metrics support inspection.

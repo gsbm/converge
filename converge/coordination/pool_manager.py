@@ -72,6 +72,15 @@ class PoolManager:
             if not policy.can_admit(agent_id, pool_context):
                 return False
 
+        trust_model = getattr(pool, "trust_model", None)
+        trust_threshold = getattr(pool, "trust_threshold", 0.0)
+        if (
+            trust_model is not None
+            and hasattr(trust_model, "get_trust")
+            and trust_model.get_trust(agent_id) < trust_threshold
+        ):
+            return False
+
         pool.add_agent(agent_id)
         self.store.put(f"pool:{pool.id}", pool)
         return True
@@ -106,7 +115,30 @@ class PoolManager:
         """
         pool = self.pools.get(pool_id)
         if not pool:
-             pool = self.store.get(f"pool:{pool_id}")
-             if pool:
-                 self.pools[pool_id] = pool
+            pool = self.store.get(f"pool:{pool_id}")
+            if pool:
+                self.pools[pool_id] = pool
         return pool
+
+    def get_pools_for_agent(self, agent_id: str) -> list[str]:
+        """
+        Return the list of pool IDs that the agent is a member of.
+
+        Args:
+            agent_id (str): The fingerprint of the agent.
+
+        Returns:
+            List[str]: Pool IDs the agent has joined.
+        """
+        result: list[str] = []
+        for pid, pool in self.pools.items():
+            if agent_id in pool.agents:
+                result.append(pid)
+        for key in self.store.list("pool:"):
+            pid = key.removeprefix("pool:") if key.startswith("pool:") else key
+            if pid in self.pools:
+                continue
+            pool = self.store.get(key)
+            if pool is not None and agent_id in getattr(pool, "agents", set()):
+                result.append(pid)
+        return result

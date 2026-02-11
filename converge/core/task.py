@@ -1,7 +1,10 @@
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .topic import Topic
 
 
 class TaskState(Enum):
@@ -27,6 +30,9 @@ class Task:
         state (TaskState): Current lifecycle state of the task.
         assigned_to (Optional[str]): Fingerprint of the agent assigned to this task.
         result (Optional[Any]): The final output or error descriptor.
+        pool_id (Optional[str]): If set, only agents in this pool should see the task (routing).
+        topic (Optional[Topic]): If set, used for routing; only agents matching this topic see the task.
+        required_capabilities (List[str]): If set, only agents with all these capabilities see the task.
     """
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     objective: dict[str, Any] = field(default_factory=dict)
@@ -39,3 +45,8 @@ class Task:
     # Optional metadata
     assigned_to: str | None = None
     result: Any | None = None
+
+    # Routing: only agents in the pool or matching topic/capabilities should see this task
+    pool_id: str | None = None
+    topic: "Topic | None" = None
+    required_capabilities: list[str] = field(default_factory=list)

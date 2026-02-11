@@ -1,7 +1,49 @@
 from converge.core.agent import Agent
+from converge.core.capability import Capability
 from converge.core.message import Message
+from converge.core.topic import Topic
 from converge.network.discovery import AgentDescriptor, DiscoveryQuery
 from converge.network.transport.base import Transport
+
+
+def build_descriptor(agent: Agent) -> AgentDescriptor:
+    """
+    Build an AgentDescriptor from an Agent for discovery registration.
+
+    Uses the agent's id, topics, and capabilities. If capabilities are strings,
+    they are converted to Capability instances with default version and description.
+
+    Args:
+        agent: The agent to describe.
+
+    Returns:
+        AgentDescriptor suitable for DiscoveryService.register().
+    """
+    topics = []
+    for t in getattr(agent, "topics", []) or []:
+        if isinstance(t, Topic):
+            topics.append(t)
+        elif isinstance(t, dict):
+            topics.append(Topic.from_dict(t))
+        else:
+            topics.append(Topic(namespace=str(t), attributes={}))
+
+    caps = []
+    for c in getattr(agent, "capabilities", []) or []:
+        if isinstance(c, Capability):
+            caps.append(c)
+        else:
+            caps.append(
+                Capability(name=str(c), version="1.0", description=""),
+            )
+
+    public_key = getattr(getattr(agent, "identity", None), "public_key", None)
+    return AgentDescriptor(
+        id=agent.id,
+        topics=topics,
+        capabilities=caps,
+        public_key=public_key,
+    )
 
 
 class AgentNetwork:

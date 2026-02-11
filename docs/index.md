@@ -34,10 +34,10 @@ architecture/index
 
 - [Installation](user_guide/installation.md)
 - [Quick start](user_guide/quickstart.md)
-- [Concepts](user_guide/concepts.md) — agents, identity, messages, topics, tasks, pools, decisions
-- [Extensions](user_guide/extensions.md) — crypto, LLM, storage
+- [Concepts](user_guide/concepts.md): agents, identity, messages, topics, tasks, pools, decisions
+- [Extensions](user_guide/extensions.md): crypto, LLM, storage
 - [CLI and configuration](user_guide/cli_and_config.md)
-- [API reference](api/index.md) — [Project reference](api/project_reference.md) (module index)
+- [API reference](api/index.md): [Project reference](api/project_reference.md) (module index)
 - [Architecture](architecture/index.md)
 
 ## Requirements and status

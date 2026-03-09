@@ -76,6 +76,8 @@ class AgentRuntime:
         health_check=None,
         ready_check=None,
         receive_timeout_sec: float | None = 30.0,
+        claim_ttl_interval_sec: float | None = None,
+        task_poll_interval_sec: float | None = None,
     ):
         """
         Initialize the agent runtime.
@@ -121,6 +123,14 @@ class AgentRuntime:
             receive_timeout_sec: Optional timeout for transport.receive() so the loop can react to
                 shutdown. When set, receive() is called with this timeout; TimeoutError is caught and
                 the loop continues. None means no timeout (block until message).
+            claim_ttl_interval_sec: Optional interval in seconds. When set and task_manager is set,
+                the run loop calls task_manager.release_expired_claims(time.monotonic()) at most
+                once per interval so expired task claims are released automatically. Ignored if
+                task_manager is None.
+            task_poll_interval_sec: Optional interval in seconds. When set and task_manager is set,
+                a background task periodically checks whether the set of pending tasks for this
+                agent has changed and calls scheduler.notify() so the main loop wakes and processes
+                tasks sooner. Ignored if task_manager is None.
         """
         self.agent = agent
         self.transport = transport
@@ -145,6 +155,11 @@ class AgentRuntime:
         self._health_check = health_check
         self._ready_check = ready_check
         self.receive_timeout_sec = receive_timeout_sec
+        self.claim_ttl_interval_sec = claim_ttl_interval_sec
+        self.task_poll_interval_sec = task_poll_interval_sec
+        self._last_claim_ttl_ts: float = 0.0
+        self._task_poll_task: asyncio.Task | None = None
+        self._last_pending_task_ids: frozenset[str] | None = None
 
         from .scheduler import Scheduler
         self.pool_manager = pool_manager
@@ -188,6 +203,9 @@ class AgentRuntime:
         # Start main loop
         self._loop_task = asyncio.create_task(self._run_loop())
 
+        if self.task_poll_interval_sec is not None and self.task_manager is not None:
+            self._task_poll_task = asyncio.create_task(self._task_poll_loop())
+
     async def stop(self) -> None:
         """Stop the agent loop."""
         self.running = False
@@ -206,6 +224,11 @@ class AgentRuntime:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._loop_task
 
+        if self._task_poll_task:
+            self._task_poll_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task_poll_task
+
         await self.transport.stop()
 
         if self.discovery_service is not None:
@@ -215,6 +238,7 @@ class AgentRuntime:
 
         self._loop_task = None
         self._listen_task = None
+        self._task_poll_task = None
 
     async def _listen_transport(self) -> None:
         """Continuously receive messages from transport and push to inbox."""
@@ -245,6 +269,38 @@ class AgentRuntime:
             except Exception as e:
                 logger.warning("Error receiving message: %s", e)
                 await asyncio.sleep(1)
+
+    async def _task_poll_loop(self) -> None:
+        """Periodically check for pending task changes and notify scheduler to wake the main loop."""
+        interval = self.task_poll_interval_sec
+        if interval is None or self.task_manager is None:
+            return
+        try:
+            while self.running:
+                await asyncio.sleep(interval)
+                if not self.running:
+                    break
+                if self.task_manager is None:
+                    continue
+                if self.pool_manager is not None:
+                    pool_ids = self.pool_manager.get_pools_for_agent(self.agent.id)
+                    capabilities = getattr(self.agent, "capabilities", None) or []
+                    tasks = self.task_manager.list_pending_tasks_for_agent(
+                        self.agent.id,
+                        pool_ids=pool_ids,
+                        capabilities=capabilities,
+                    )
+                else:
+                    tasks = self.task_manager.list_pending_tasks()
+                current_ids = frozenset(t.id for t in tasks)
+                if (
+                    self._last_pending_task_ids is not None
+                    and current_ids != self._last_pending_task_ids
+                ):
+                    self.scheduler.notify()
+                self._last_pending_task_ids = current_ids
+        except asyncio.CancelledError:
+            pass
 
     async def _run_loop(self) -> None:
         """The main execution loop."""
@@ -345,6 +401,22 @@ class AgentRuntime:
                         self._last_checkpoint_ts = now
                     except Exception as e:
                         logger.debug("Checkpoint write skipped: %s", e)
+
+            # Optional release of expired task claims (claim_ttl_sec)
+            if (
+                self.claim_ttl_interval_sec is not None
+                and self.task_manager is not None
+            ):
+                now = time.monotonic()
+                if now - self._last_claim_ttl_ts >= self.claim_ttl_interval_sec:
+                    released = self.task_manager.release_expired_claims(now)
+                    self._last_claim_ttl_ts = now
+                    if released:
+                        logger.debug(
+                            "Released %s expired claim(s): %s",
+                            len(released),
+                            released,
+                        )
 
     async def _execute_decision_fallback(self, decision: Any) -> None:
         # Legacy fallback if no executor configured

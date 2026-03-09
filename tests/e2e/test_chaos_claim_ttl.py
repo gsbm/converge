@@ -110,3 +110,67 @@ async def test_e2e_chaos_claim_then_release_expired_other_claims(registry):
 
     assert tm.get_task(task_id).result == "recovered"
     await runtime2.stop()
+
+
+@pytest.mark.asyncio
+async def test_e2e_chaos_claim_ttl_builtin_release(registry):
+    """Runtime with claim_ttl_interval_sec releases expired claim; second agent can claim without manual release_expired_claims."""
+    store = MemoryStore()
+    pm = PoolManager(store=store)
+    tm = TaskManager(store=store)
+
+    pool = pm.create_pool({"id": "chaos-pool", "topics": []})
+    task = Task(
+        objective={"chaos": True},
+        inputs={},
+        constraints={"claim_ttl_sec": 0.2},
+    )
+    task_id = tm.submit(task)
+
+    id1 = Identity.generate()
+    agent1 = ClaimOnlyAgent(id1)
+    trans1 = LocalTransport(agent1.id)
+    runtime1 = AgentRuntime(
+        agent=agent1,
+        transport=trans1,
+        pool_manager=pm,
+        task_manager=tm,
+        claim_ttl_interval_sec=0.1,
+    )
+    await runtime1.start()
+    pm.join_pool(agent1.id, pool.id)
+
+    for _ in range(20):
+        await asyncio.sleep(0.05)
+        if tm.get_task(task_id).state.value == "assigned":
+            break
+    assert tm.get_task(task_id).state.value == "assigned"
+
+    await runtime1.stop()
+
+    time.sleep(0.35)
+
+    id2 = Identity.generate()
+    agent2 = WorkerAgent(id2)
+    trans2 = LocalTransport(agent2.id)
+    runtime2 = AgentRuntime(
+        agent=agent2,
+        transport=trans2,
+        pool_manager=pm,
+        task_manager=tm,
+        claim_ttl_interval_sec=0.1,
+    )
+    await runtime2.start()
+    pm.join_pool(agent2.id, pool.id)
+
+    for _ in range(50):
+        await asyncio.sleep(0.1)
+        t = tm.get_task(task_id)
+        if t is not None and t.state.value == "completed":
+            break
+    else:
+        await runtime2.stop()
+        pytest.fail("Task not completed by second agent (built-in release)")
+
+    assert tm.get_task(task_id).result == "recovered"
+    await runtime2.stop()

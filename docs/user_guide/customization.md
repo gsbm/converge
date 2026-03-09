@@ -10,7 +10,7 @@ The framework is designed so that most components can be replaced or extended fo
 - **Executor**: Two options:
   - **executor_factory**: Callable `(agent_id, network, task_manager, pool_manager, **kwargs) -> Executor`. The runtime calls it each run loop to get the executor. Use for a fully custom executor.
   - **executor_kwargs**: Dict of kwargs passed to the default `StandardExecutor` (e.g. `custom_handlers`, `safety_policy`, `bidding_protocols`, `tool_timeout_sec`, `tool_allowlist`). Ignored if `executor_factory` is set.
-- **Other runtime options**: `pool_manager`, `task_manager`, `metrics_collector`, `discovery_service`, `agent_descriptor`, `identity_registry`, `replay_log`, `tool_registry`, `checkpoint_store`, `checkpoint_interval_sec`, `health_check`, `ready_check`, `receive_timeout_sec` are all optional and configurable.
+- **Other runtime options**: `pool_manager`, `task_manager`, `metrics_collector`, `discovery_service`, `agent_descriptor`, `identity_registry`, `replay_log`, `tool_registry`, `checkpoint_store`, `checkpoint_interval_sec`, `health_check`, `ready_check`, `receive_timeout_sec`, `claim_ttl_interval_sec`, `task_poll_interval_sec` are all optional and configurable.
 
 ## Executor and decisions
 
@@ -63,6 +63,8 @@ The framework is designed so that most components can be replaced or extended fo
 | Store            | Implement Store; pass to managers/discovery |
 | MetricsCollector | Implement; pass to runtime/executor |
 | ReplayLog        | Implement record_message; pass to runtime |
+| claim_ttl_interval_sec | Pass to runtime for automatic release_expired_claims |
+| task_poll_interval_sec | Pass to runtime for periodic task-poll wake-up |
 | Tool             | Implement Tool protocol; register on ToolRegistry |
 | LLM provider     | Implement chat (and optionally chat_stream) |
 

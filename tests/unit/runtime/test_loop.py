@@ -10,6 +10,7 @@ from converge.core.agent import Agent
 from converge.core.identity import Identity
 from converge.core.message import Message
 from converge.network.identity_registry import IdentityRegistry
+from converge.network.transport.base import Transport
 from converge.network.transport.local import LocalTransport
 from converge.runtime.loop import AgentRuntime, Inbox
 
@@ -106,7 +107,7 @@ async def test_runtime_executes_decisions():
 
     await runtime.start()
 
-    await runtime.inbox.push(Message(sender="sys", payload="tick"))
+    await runtime.inbox.push(Message(sender="sys", payload={"type": "tick"}))
     runtime.scheduler.notify()
     await asyncio.sleep(0.05)
 
@@ -136,7 +137,7 @@ async def test_runtime_exception_handling():
     runtime = AgentRuntime(agent, transport, pool_manager=pm)
     await runtime.start()
 
-    await runtime.inbox.push(Message(sender="sys", payload="tick"))
+    await runtime.inbox.push(Message(sender="sys", payload={"type": "tick"}))
     runtime.scheduler.notify()
     await asyncio.sleep(0.05)
 
@@ -327,17 +328,25 @@ async def test_runtime_receive_verified_path_called():
 
     call_count = [0]
 
-    class TransportWithVerified:
+    class TransportWithVerified(Transport):
+        async def send(self, message: Message) -> None:
+            pass
+
+        async def receive(self, timeout: float | None = None) -> Message:
+            if timeout is not None:
+                raise TimeoutError()
+            return Message()
+
         async def receive_verified(self, _reg, timeout=None):
             call_count[0] += 1
             if call_count[0] == 1:
                 return
             await asyncio.Future()
 
-        async def start(self):
+        async def start(self) -> None:
             pass
 
-        async def stop(self):
+        async def stop(self) -> None:
             pass
 
     transport = TransportWithVerified()
@@ -365,7 +374,94 @@ async def test_runtime_no_managers_uses_fallback():
     transport = LocalTransport(identity.fingerprint)
     runtime = AgentRuntime(agent, transport, pool_manager=None, task_manager=None)
     await runtime.start()
-    await runtime.inbox.push(Message(sender="other", payload="tick"))
+    await runtime.inbox.push(Message(sender="other", payload={"type": "tick"}))
     runtime.scheduler.notify()
     await asyncio.sleep(0.2)
     await runtime.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_claim_ttl_interval_releases_expired_claims():
+    """When claim_ttl_interval_sec is set, run loop calls release_expired_claims and expired task returns to PENDING."""
+    from converge.coordination.task_manager import TaskManager
+    from converge.core.task import Task
+    from converge.extensions.storage.memory import MemoryStore
+
+    store = MemoryStore()
+    tm = TaskManager(store=store)
+    task = Task(
+        objective={"job": "test"},
+        inputs={},
+        constraints={"claim_ttl_sec": 0.05},
+    )
+    task_id = tm.submit(task)
+    tm.claim("other_agent", task_id)
+    t0 = tm.get_task(task_id)
+    assert t0 is not None and t0.state.value == "assigned"
+    await asyncio.sleep(0.08)
+
+    id_a = Identity.generate()
+    agent = CoverageAgent(id_a)
+    transport = LocalTransport(id_a.fingerprint)
+    pm = PoolManager(store=store)
+    runtime = AgentRuntime(
+        agent=agent,
+        transport=transport,
+        pool_manager=pm,
+        task_manager=tm,
+        claim_ttl_interval_sec=0.05,
+    )
+    await runtime.start()
+    runtime.scheduler.notify()
+    await asyncio.sleep(0.15)
+    await runtime.stop()
+
+    t = tm.get_task(task_id)
+    assert t is not None, "Task should exist after runtime stop"
+    assert t.state.value == "pending"
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_poll_interval_notifies_on_new_task():
+    """When task_poll_interval_sec is set, scheduler is notified when pending tasks change."""
+    from converge.coordination.task_manager import TaskManager
+    from converge.core.task import Task
+    from converge.extensions.storage.memory import MemoryStore
+
+    store = MemoryStore()
+    tm = TaskManager(store=store)
+    pm = PoolManager(store=store)
+    pool = pm.create_pool({"id": "p1"})
+
+    id_a = Identity.generate()
+    agent = CoverageAgent(id_a)
+    agent.capabilities = []
+    transport = LocalTransport(id_a.fingerprint)
+    pm.join_pool(id_a.fingerprint, pool.id)
+
+    notify_count = [0]
+    original_notify = None
+
+    def counting_notify():
+        notify_count[0] += 1
+        if original_notify:
+            original_notify()
+
+    runtime = AgentRuntime(
+        agent=agent,
+        transport=transport,
+        pool_manager=pm,
+        task_manager=tm,
+        task_poll_interval_sec=0.05,
+    )
+    original_notify = runtime.scheduler.notify
+    runtime.scheduler.notify = counting_notify
+
+    await runtime.start()
+    initial_notifies = notify_count[0]
+    task = Task(objective={"x": 1}, pool_id=pool.id)
+    tm.submit(task)
+    await asyncio.sleep(0.15)
+    await runtime.stop()
+
+    assert notify_count[0] > initial_notifies

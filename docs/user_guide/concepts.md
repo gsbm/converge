@@ -54,7 +54,7 @@ A **task** is a unit of work with:
 - **Routing** (optional): `pool_id`, `topic`, and `required_capabilities` restrict which agents see the task. When the runtime has a pool manager, it calls `list_pending_tasks_for_agent` so each agent only sees tasks for its pools and capabilities.
 - **Constraints** (optional): conventional keys include `timeout_sec`, `deadline`, `claim_ttl_sec` (seconds after claim before the task can be released back to PENDING), `max_retries`, `cpu`, `memory_mb`. Enforcement is by custom executor or safety logic, not the core.
 
-Tasks are first-class: submitted to a **task manager**, claimed by agents, and reported via decisions. The task manager supports **cancel_task** and **fail_task**; call **release_expired_claims(time.monotonic())** periodically to release tasks whose claim TTL has elapsed. The task manager can use a **store** for persistence (e.g. in-memory or file-backed).
+Tasks are first-class: submitted to a **task manager**, claimed by agents, and reported via decisions. The task manager supports **cancel_task** and **fail_task**; call **release_expired_claims(time.monotonic())** periodically to release tasks whose claim TTL has elapsed. You can set **claim_ttl_interval_sec** on AgentRuntime so the runtime periodically calls release_expired_claims automatically (no external cron needed). The task manager can use a **store** for persistence (e.g. in-memory or file-backed).
 
 ## Reliability and idempotency
 

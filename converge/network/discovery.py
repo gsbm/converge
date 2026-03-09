@@ -9,19 +9,25 @@ message verification; callers that want verified receive can populate
 IdentityRegistry from query results (identity_registry.register(d.id, d.public_key)).
 """
 import base64
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from converge.core.capability import Capability
 from converge.core.store import Store
 from converge.core.topic import Topic
+from converge.policy.trust import TrustModel
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class DiscoveryQuery:
+    """Query criteria for discovery: topics, capabilities, and optional trust threshold."""
+
     topics: list[Topic] = field(default_factory=list)
     capabilities: list[str] = field(default_factory=list)
-    trust_threshold: float = 0.0
+    trust_threshold: float = 0.0  # Min trust score (0.0-1.0) when trust_model set on DiscoveryService; ignored when 0.
 
 
 @dataclass
@@ -93,9 +99,20 @@ class DiscoveryService:
     Service for discovering agents based on queries.
     Persists AgentDescriptors in Store when provided.
     """
-    def __init__(self, store: Store | None = None):
+
+    def __init__(self, store: Store | None = None, trust_model: TrustModel | None = None):
+        """
+        Initialize the discovery service.
+
+        Args:
+            store: Optional store for persisting descriptors across restarts.
+            trust_model: Optional TrustModel for trust-aware filtering when
+                query.trust_threshold > 0. When set, query() filters out agents
+                whose trust score is below the threshold.
+        """
         self.descriptors: dict[str, AgentDescriptor] = {}
         self.store = store
+        self.trust_model = trust_model
         if store:
             self._load_from_store()
 
@@ -127,23 +144,44 @@ class DiscoveryService:
         if self.store:
             self.store.delete(f"{_DISCOVERY_PREFIX}{agent_id}")
 
-    def query(self, query: DiscoveryQuery, candidates: list[AgentDescriptor]) -> list[AgentDescriptor]:
+    def query(
+        self,
+        query: DiscoveryQuery,
+        candidates: list[AgentDescriptor] | None = None,
+        *,
+        refresh_from_store: bool = False,
+    ) -> list[AgentDescriptor]:
         """
-        Filter a list of agent candidates based on a discovery query.
+        Filter agent candidates based on a discovery query.
+
+        When candidates is None, uses the service's own descriptors (optionally
+        refreshed from store when refresh_from_store is True and a store is set).
+        When query.trust_threshold > 0 and trust_model is set, only agents with
+        trust score >= threshold are returned.
 
         Args:
-            query (DiscoveryQuery): The criteria for discovery (topics, capabilities).
-            candidates (List[AgentDescriptor]): The list of agents to search within.
+            query: The criteria for discovery (topics, capabilities, trust_threshold).
+            candidates: Optional list of agents to search within. If None, uses
+                self.descriptors (after optional refresh from store).
+            refresh_from_store: If True and store is set, reload descriptors from
+                store before filtering. Use in multi-process setups to see
+                agents registered by other processes.
 
         Returns:
-            List[AgentDescriptor]: A list of agents that match the query criteria.
+            List of agents that match the query criteria (topics, capabilities,
+            and trust when trust_threshold > 0 and trust_model is set).
         """
+        if refresh_from_store and self.store:
+            self._load_from_store()
+
+        if candidates is None:
+            candidates = list(self.descriptors.values())
+
         results = []
         for agent in candidates:
             # Check topics
             topic_match = True
             if query.topics:
-                # Require intersection of topics
                 agent_topic_ids = {str(t) for t in agent.topics}
                 query_topic_ids = {str(t) for t in query.topics}
                 if not agent_topic_ids.intersection(query_topic_ids):
@@ -156,11 +194,22 @@ class DiscoveryService:
                 for c in agent.capabilities:
                     name = c.name if hasattr(c, "name") else str(c)
                     agent_caps.add(name)
-                # Must have ALL requested capabilities
                 if not set(query.capabilities).issubset(agent_caps):
                     cap_match = False
 
-            if topic_match and cap_match:
-                results.append(agent)
+            if not (topic_match and cap_match):
+                continue
+
+            # Trust filter: when threshold > 0 and trust_model set, require score >= threshold
+            if query.trust_threshold > 0:
+                if self.trust_model is not None:
+                    if self.trust_model.get_trust(agent.id) < query.trust_threshold:
+                        continue
+                else:
+                    logger.warning(
+                        "trust_threshold > 0 but no trust_model on DiscoveryService; skipping trust filter",
+                    )
+
+            results.append(agent)
 
         return results

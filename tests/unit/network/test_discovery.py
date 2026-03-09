@@ -1,8 +1,11 @@
 """Tests for converge.network.discovery."""
 
+import logging
+
 from converge.core.agent import Agent
 from converge.core.capability import Capability
 from converge.core.identity import Identity
+from converge.core.message import Message
 from converge.core.topic import Topic
 from converge.network.discovery import (
     AgentDescriptor,
@@ -10,6 +13,8 @@ from converge.network.discovery import (
     DiscoveryService,
 )
 from converge.network.network import AgentNetwork
+from converge.network.transport.base import Transport
+from converge.policy.trust import TrustModel
 
 
 class DiscoverableAgent(Agent):
@@ -19,17 +24,21 @@ class DiscoverableAgent(Agent):
         self.capabilities = capabilities or []
 
 
-class MockTransport:
-    async def send(self, m):
+class MockTransport(Transport):
+    """Minimal Transport implementation for discovery tests that only use AgentNetwork.discover()."""
+
+    async def send(self, message: Message) -> None:
         pass
 
-    async def receive(self):
+    async def receive(self, timeout: float | None = None) -> Message:
+        if timeout is not None:
+            raise TimeoutError()
+        return Message()
+
+    async def start(self) -> None:
         pass
 
-    async def start(self):
-        pass
-
-    async def stop(self):
+    async def stop(self) -> None:
         pass
 
 
@@ -207,3 +216,84 @@ def test_discovery_load_from_store_invalid_entry_skipped():
     store.put("discovery:agent:bad", {"id": "bad", "topics": "not a list"})
     ds = DiscoveryService(store=store)
     assert "bad" not in ds.descriptors
+
+
+def test_discovery_query_trust_threshold_filters_low_trust():
+    """When trust_model is set and trust_threshold > 0, only agents with score >= threshold are returned."""
+    trust = TrustModel()
+    trust.update_trust("agent_high", 0.3)  # 0.5 + 0.3 = 0.8
+    trust.update_trust("agent_low", -0.4)  # 0.5 - 0.4 = 0.1
+    cap = Capability("c", "1.0", "d")
+    desc_high = AgentDescriptor("agent_high", [Topic("ns", {})], [cap])
+    desc_low = AgentDescriptor("agent_low", [Topic("ns", {})], [cap])
+    ds = DiscoveryService(trust_model=trust)
+    candidates = [desc_high, desc_low]
+    results = ds.query(DiscoveryQuery(trust_threshold=0.5), candidates)
+    assert len(results) == 1
+    assert results[0].id == "agent_high"
+
+
+def test_discovery_query_trust_threshold_zero_no_filter():
+    """When trust_threshold is 0, both agents returned regardless of trust score."""
+    trust = TrustModel()
+    trust.update_trust("agent_high", 0.3)
+    trust.update_trust("agent_low", -0.4)
+    cap = Capability("c", "1.0", "d")
+    desc_high = AgentDescriptor("agent_high", [Topic("ns", {})], [cap])
+    desc_low = AgentDescriptor("agent_low", [Topic("ns", {})], [cap])
+    ds = DiscoveryService(trust_model=trust)
+    candidates = [desc_high, desc_low]
+    results = ds.query(DiscoveryQuery(trust_threshold=0.0), candidates)
+    assert len(results) == 2
+
+
+def test_discovery_query_trust_threshold_no_trust_model_warning(caplog):
+    """When trust_threshold > 0 but no trust_model, warning logged and no trust filter applied."""
+    cap = Capability("c", "1.0", "d")
+    desc = AgentDescriptor("agent1", [Topic("ns", {})], [cap])
+    ds = DiscoveryService(trust_model=None)
+    with caplog.at_level(logging.WARNING):
+        results = ds.query(DiscoveryQuery(trust_threshold=0.5), [desc])
+    assert len(results) == 1
+    assert "trust_threshold" in caplog.text and "no trust_model" in caplog.text
+
+
+def test_discovery_query_candidates_none_uses_descriptors():
+    """When candidates is None, query uses self.descriptors."""
+    cap = Capability("c", "1.0", "d")
+    desc = AgentDescriptor("id1", [Topic("ns", {})], [cap])
+    ds = DiscoveryService()
+    ds.register(desc)
+    results = ds.query(DiscoveryQuery())
+    assert len(results) == 1
+    assert results[0].id == "id1"
+
+
+def test_discovery_query_refresh_from_store_loads_new_registrations():
+    """refresh_from_store=True reloads from store so agents registered by other processes are visible."""
+    from converge.extensions.storage.memory import MemoryStore
+
+    store = MemoryStore()
+    cap = Capability("c", "1.0", "d")
+    desc1 = AgentDescriptor("id1", [Topic("ns", {})], [cap])
+    desc2 = AgentDescriptor("id2", [Topic("ns", {})], [cap])
+    ds = DiscoveryService(store=store)
+    ds.register(desc1)
+    assert len(ds.descriptors) == 1
+    store.put("discovery:agent:id2", desc2.to_dict())
+    results = ds.query(DiscoveryQuery(), refresh_from_store=True)
+    assert len(results) == 2
+    ids = {d.id for d in results}
+    assert "id1" in ids and "id2" in ids
+
+
+def test_discovery_query_candidates_explicit_overrides():
+    """When candidates is provided, only those are considered (not service descriptors)."""
+    cap = Capability("c", "1.0", "d")
+    desc1 = AgentDescriptor("id1", [Topic("ns1", {})], [cap])
+    desc2 = AgentDescriptor("id2", [Topic("ns2", {})], [cap])
+    ds = DiscoveryService()
+    ds.register(desc1)
+    results = ds.query(DiscoveryQuery(), candidates=[desc2])
+    assert len(results) == 1
+    assert results[0].id == "id2"

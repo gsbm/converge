@@ -1,6 +1,6 @@
 [project]
 name = "converge"
-version = "0.1.0"
+version = "0.1.1"
 description = "A distributed operating system for agents"
 authors = [{name = "gsbm"}]
 readme = "README.md"

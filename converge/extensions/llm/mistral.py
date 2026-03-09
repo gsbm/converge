@@ -1,5 +1,6 @@
 """Mistral AI provider for the LLM extension."""
 
+import os
 from typing import Any
 
 
@@ -30,7 +31,11 @@ class MistralProvider:
                     "Mistral provider requires mistralai>=1.0. "
                     "Install with: pip install 'converge[llm-mistral]'",
                 ) from e
-            self._client = Mistral(api_key=self.api_key)
+            # SDK only reads MISTRAL_API_KEY when api_key is omitted (security=None).
+            # Passing api_key=None builds Security(api_key=None) and no Authorization
+            # header is sent, causing 401. So resolve from env when None.
+            api_key = self.api_key or os.environ.get("MISTRAL_API_KEY") or None
+            self._client = Mistral(api_key=api_key)
         return self._client
 
     def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> str:

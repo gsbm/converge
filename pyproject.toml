@@ -36,6 +36,7 @@ dev = [
     "pyright>=1.1.408",
     "pre-commit",
     "pip-audit",
+    "fakeredis>=2.0",
 ]
 docs = [
     "sphinx>=7.0.0",
@@ -52,6 +53,9 @@ websocket = [
 ]
 cli = [
     "pyyaml>=6.0",
+]
+store-backends = [
+    "redis>=5.0",
 ]
 
 [project.urls]

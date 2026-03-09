@@ -41,7 +41,7 @@ def _load_config(path: str | None) -> dict:
             suffix = p.suffix.lower()
             if suffix in (".yaml", ".yml"):
                 try:
-                    import yaml
+                    import yaml  # type: ignore[reportMissingModuleSource]
                     with p.open() as f:
                         file_config = yaml.safe_load(f)
                     if isinstance(file_config, dict):

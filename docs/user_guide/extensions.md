@@ -65,9 +65,21 @@ Custom system prompts can be passed as `system_prompt=...`. The agent formats in
 
 **FileStore**: File-backed store using pickle; directory per store, one file per key. No extra dependency.
 
-**Modules**: `converge.extensions.storage.memory`, `converge.extensions.storage.file`
+**SQLiteStore**: Single-file SQLite store; table `(key TEXT PRIMARY KEY, value BLOB)`, pickle serialization, atomic `put_if_absent` via `INSERT OR IGNORE`. No extra dependency (stdlib `sqlite3`). Module: `converge.extensions.storage.sqlite_store`.
 
-Used by pool manager, task manager, and discovery service when a store is provided. See [API/extensions](../api/extensions.md).
+**RedisStore**: Redis-backed store; pickle serialization, `list(prefix)` via SCAN, atomic `put_if_absent` via SET NX. Install the optional extra:
+
+```bash
+pip install "converge[store-backends]"
+```
+
+Module: `converge.extensions.storage.redis_store`. Constructor: `RedisStore(redis_url="redis://localhost:6379/0", *, client=None)` (pass an existing `redis.Redis` client if desired).
+
+**VersionedStore**: Wrapper around any Store that reserves key `__meta__:schema_version` for a schema version. Use `get_version()` / `set_version(version)` to read/write it, and `check_version()` to detect changes; optionally pass `on_version_change(old_version, new_version)` to run migrations or clear caches when the version changes. Module: `converge.extensions.storage.versioned`.
+
+**Modules**: `converge.extensions.storage.memory`, `converge.extensions.storage.file`, `converge.extensions.storage.sqlite_store`, `converge.extensions.storage.redis_store`, `converge.extensions.storage.versioned`
+
+Used by pool manager, task manager, and discovery service when a store is provided. See [Store backends](../guides/store_backends.md) and [API/extensions](../api/extensions.md).
 
 ## WebSocket transport
 

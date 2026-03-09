@@ -7,8 +7,11 @@ from typing import Any
 from converge.core.agent import Agent
 from converge.core.decisions import (
     ClaimTask,
+    CreatePool,
+    InvokeTool,
     JoinPool,
     LeavePool,
+    ReportTask,
     SendMessage,
     SubmitTask,
 )
@@ -25,6 +28,9 @@ Supported decision types:
 - LeavePool: {"type": "LeavePool", "pool_id": "<pool_id>"}
 - ClaimTask: {"type": "ClaimTask", "task_id": "<task_id>"}
 - SubmitTask: {"type": "SubmitTask", "task": {"id": "<id>", "objective": {...}, "inputs": {...}}}
+- ReportTask: {"type": "ReportTask", "task_id": "<task_id>", "result": {...}}
+- CreatePool: {"type": "CreatePool", "spec": {"id": "<pool_id>", "topics": [...], "admission_policy": ...}}
+- InvokeTool: {"type": "InvokeTool", "tool_name": "<name>", "params": {...}}
 
 The message object must have: sender (str), topics (list of {"namespace": str, "attributes": dict}), payload (dict).
 A task object must have: id, objective (dict), inputs (dict).
@@ -138,6 +144,21 @@ class LLMAgent(Agent):
                         decisions.append(SubmitTask(task))
                     except Exception as e:
                         logger.warning("Failed to parse SubmitTask: %s", e)
+            elif dtype == "ReportTask":
+                task_id = item.get("task_id")
+                if isinstance(task_id, str):
+                    result = item.get("result")
+                    decisions.append(ReportTask(task_id=task_id, result=result))
+            elif dtype == "CreatePool":
+                spec = item.get("spec")
+                if isinstance(spec, dict):
+                    decisions.append(CreatePool(spec=spec))
+            elif dtype == "InvokeTool":
+                tool_name = item.get("tool_name")
+                params = item.get("params")
+                if isinstance(tool_name, str):
+                    params = params if isinstance(params, dict) else {}
+                    decisions.append(InvokeTool(tool_name=tool_name, params=params))
         return decisions
 
     def decide(self, messages: list[Any], tasks: list[Any]) -> list[Any]:

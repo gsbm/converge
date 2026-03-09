@@ -198,6 +198,74 @@ def test_llm_agent_parse_join_leave_claim_non_string_skipped():
     assert len(decisions) == 0
 
 
+def test_llm_agent_parse_report_task_create_pool_invoke_tool():
+    """Parse valid ReportTask, CreatePool, InvokeTool decisions."""
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = json.dumps([
+        {"type": "ReportTask", "task_id": "t1", "result": {"status": "done", "output": 42}},
+        {"type": "CreatePool", "spec": {"id": "new-pool", "topics": []}},
+        {"type": "InvokeTool", "tool_name": "search", "params": {"query": "x"}},
+    ])
+    agent = LLMAgent(identity, provider=provider)
+    decisions = agent.decide([], [])
+    assert len(decisions) == 3
+    from converge.core.decisions import CreatePool, InvokeTool, ReportTask
+
+    assert isinstance(decisions[0], ReportTask)
+    assert decisions[0].task_id == "t1"
+    assert decisions[0].result == {"status": "done", "output": 42}
+    assert isinstance(decisions[1], CreatePool)
+    assert decisions[1].spec == {"id": "new-pool", "topics": []}
+    assert isinstance(decisions[2], InvokeTool)
+    assert decisions[2].tool_name == "search"
+    assert decisions[2].params == {"query": "x"}
+
+
+def test_llm_agent_parse_report_task_invalid_task_id_skipped():
+    """ReportTask with non-string task_id is skipped."""
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = json.dumps([
+        {"type": "ReportTask", "task_id": 123, "result": {}},
+        {"type": "ReportTask", "result": {}},
+    ])
+    agent = LLMAgent(identity, provider=provider)
+    decisions = agent.decide([], [])
+    assert len(decisions) == 0
+
+
+def test_llm_agent_parse_create_pool_invalid_spec_skipped():
+    """CreatePool with non-dict spec is skipped."""
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = json.dumps([
+        {"type": "CreatePool", "spec": "not-a-dict"},
+        {"type": "CreatePool", "spec": None},
+    ])
+    agent = LLMAgent(identity, provider=provider)
+    decisions = agent.decide([], [])
+    assert len(decisions) == 0
+
+
+def test_llm_agent_parse_invoke_tool_invalid_skipped():
+    """InvokeTool with non-string tool_name is skipped; missing params default to {}."""
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = json.dumps([
+        {"type": "InvokeTool", "tool_name": 999, "params": {}},
+        {"type": "InvokeTool", "tool_name": "ok", "params": {}},
+    ])
+    agent = LLMAgent(identity, provider=provider)
+    decisions = agent.decide([], [])
+    assert len(decisions) == 1
+    from converge.core.decisions import InvokeTool
+
+    assert isinstance(decisions[0], InvokeTool)
+    assert decisions[0].tool_name == "ok"
+    assert decisions[0].params == {}
+
+
 def test_llm_agent_format_messages_with_topics():
     from converge.core.message import Message
     from converge.core.topic import Topic

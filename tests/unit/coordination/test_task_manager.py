@@ -1,5 +1,7 @@
 """Tests for converge.coordination.task_manager."""
 
+import asyncio
+
 import pytest
 
 from converge.coordination.task_manager import TaskManager
@@ -52,11 +54,17 @@ def test_task_manager_persistence_reload():
     assert loaded_task.id == task.id
 
     assert tm2.claim("agent1", task.id)
-    assert tm2.get_task(task.id).state == TaskState.ASSIGNED
-    assert store.get(f"task:{task.id}").state == TaskState.ASSIGNED
+    got = tm2.get_task(task.id)
+    assert got is not None
+    assert got.state == TaskState.ASSIGNED
+    stored = store.get(f"task:{task.id}")
+    assert stored is not None
+    assert stored.state == TaskState.ASSIGNED
 
     tm2.report("agent1", task.id, "result")
-    assert tm2.get_task(task.id).state == TaskState.COMPLETED
+    got2 = tm2.get_task(task.id)
+    assert got2 is not None
+    assert got2.state == TaskState.COMPLETED
 
 
 def test_task_manager_cache_miss_actions():
@@ -69,7 +77,9 @@ def test_task_manager_cache_miss_actions():
     tm2 = TaskManager(store)
     success = tm2.claim("agent1", task1.id)
     assert success
-    assert tm2.get_task(task1.id).state == TaskState.ASSIGNED
+    g = tm2.get_task(task1.id)
+    assert g is not None
+    assert g.state == TaskState.ASSIGNED
 
     task2 = Task()
     tm1.submit(task2)
@@ -78,6 +88,7 @@ def test_task_manager_cache_miss_actions():
     tm3 = TaskManager(store)
     tm3.report("agent1", task2.id, "result")
     t2 = tm3.get_task(task2.id)
+    assert t2 is not None
     assert t2.state == TaskState.COMPLETED
     assert t2.result == "result"
 
@@ -269,3 +280,37 @@ def test_release_expired_claims():
     assert task.assigned_to is None
     assert task.claimed_at is None
     assert task.id in tm.pending_task_ids
+
+
+@pytest.mark.asyncio
+async def test_wait_until_done_returns_when_report_called():
+    """wait_until_done completes and returns the task when report() is called."""
+    tm = TaskManager()
+    task = Task(objective={"x": 1})
+    task_id = tm.submit(task)
+    tm.claim("agent1", task_id)
+
+    async def report_after_delay():
+        await asyncio.sleep(0.05)
+        tm.report("agent1", task_id, {"answer": 42})
+
+    asyncio.create_task(report_after_delay())
+    result = await tm.wait_until_done(task_id, timeout=2.0)
+    assert result is not None
+    assert result.state == TaskState.COMPLETED
+    assert result.result == {"answer": 42}
+
+
+@pytest.mark.asyncio
+async def test_wait_until_done_returns_immediately_if_already_completed():
+    """wait_until_done returns immediately if the task is already in a terminal state."""
+    tm = TaskManager()
+    task = Task(objective={"x": 1})
+    task_id = tm.submit(task)
+    tm.claim("agent1", task_id)
+    tm.report("agent1", task_id, "done")
+
+    result = await tm.wait_until_done(task_id, timeout=1.0)
+    assert result is not None
+    assert result.state == TaskState.COMPLETED
+    assert result.result == "done"

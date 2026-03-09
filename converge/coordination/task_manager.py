@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import Any
 
@@ -19,6 +20,7 @@ class TaskManager:
         self.store = store
         self.tasks: dict[str, Task] = {}
         self.pending_task_ids: set[str] = set()
+        self._completion_events: dict[str, asyncio.Event] = {}
 
     def submit(self, task: Task) -> str:
         """
@@ -92,6 +94,8 @@ class TaskManager:
         task.assigned_to = None
         task.claimed_at = None
         self.store.put(f"task:{task.id}", task)
+        if task_id in self._completion_events:
+            self._completion_events[task_id].set()
         return True
 
     def fail_task(
@@ -123,6 +127,8 @@ class TaskManager:
         task.result = reason
         task.claimed_at = None
         self.store.put(f"task:{task.id}", task)
+        if task_id in self._completion_events:
+            self._completion_events[task_id].set()
 
     def release_expired_claims(self, now_ts: float) -> list[str]:
         """
@@ -203,6 +209,8 @@ class TaskManager:
         task.result = result
         task.state = TaskState.COMPLETED
         self.store.put(f"task:{task.id}", task)
+        if task_id in self._completion_events:
+            self._completion_events[task_id].set()
 
     def get_task(self, task_id: str) -> Task | None:
         """
@@ -222,6 +230,39 @@ class TaskManager:
                 if task.state == TaskState.PENDING:
                     self.pending_task_ids.add(task_id)
         return task
+
+    async def wait_until_done(self, task_id: str, timeout: float) -> Task | None:
+        """
+        Wait until a task reaches a terminal state (COMPLETED, FAILED, CANCELLED) or timeout.
+
+        If the task is already terminal, returns immediately. Otherwise registers an
+        asyncio.Event that is set when report(), fail_task(), or cancel_task() is called
+        for this task_id, then waits up to timeout seconds.
+
+        Args:
+            task_id: The task ID to wait for.
+            timeout: Maximum seconds to wait.
+
+        Returns:
+            The Task if it reached a terminal state (or was already terminal), None on
+            timeout or if the task is not found.
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            return None
+        if task.state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED):
+            return task
+        event = self._completion_events.get(task_id)
+        if event is None:
+            event = asyncio.Event()
+            self._completion_events[task_id] = event
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+        except TimeoutError:
+            return self.get_task(task_id)
+        finally:
+            self._completion_events.pop(task_id, None)
+        return self.get_task(task_id)
 
     def list_pending_tasks(self) -> list[Task]:
         """

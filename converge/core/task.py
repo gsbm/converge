@@ -34,6 +34,7 @@ class Task:
         result (Optional[Any]): The final output or error descriptor.
         pool_id (Optional[str]): If set, only agents in this pool should see the task (routing).
         topic (Optional[Topic]): If set, used for routing; only agents matching this topic see the task.
+        priority (int): Routing priority; higher value means higher priority when listing/sorting (default 0).
         required_capabilities (List[str]): If set, only agents with all these capabilities see the task.
     """
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -52,4 +53,5 @@ class Task:
     # Routing: only agents in the pool or matching topic/capabilities should see this task
     pool_id: str | None = None
     topic: "Topic | None" = None
+    priority: int = 0  # higher = higher priority when listing/sorting
     required_capabilities: list[str] = field(default_factory=list)

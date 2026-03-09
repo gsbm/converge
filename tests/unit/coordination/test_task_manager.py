@@ -6,6 +6,7 @@ import pytest
 
 from converge.coordination.task_manager import TaskManager
 from converge.core.task import Task, TaskState
+from converge.core.topic import Topic
 from converge.extensions.storage.memory import MemoryStore
 
 
@@ -220,6 +221,55 @@ def test_list_pending_tasks_for_agent_combined_filters():
     assert t1.id in ids_p1
     assert t2.id in ids_p1
     assert t3.id not in ids_p1
+
+
+def test_list_pending_tasks_for_agent_filter_by_topic():
+    """When topics is provided, only tasks with no topic or topic in list are included."""
+    tm = TaskManager()
+    topic_a = Topic(namespace="ns", attributes={"k": "a"})
+    topic_b = Topic(namespace="ns", attributes={"k": "b"})
+    t1 = Task(topic=topic_a)
+    t2 = Task(topic=topic_b)
+    t3 = Task()  # no topic
+    tm.submit(t1)
+    tm.submit(t2)
+    tm.submit(t3)
+    result = tm.list_pending_tasks_for_agent(
+        "agent1", pool_ids=None, capabilities=None, topics=[topic_a],
+    )
+    assert len(result) == 2  # t1 and t3
+    ids = {t.id for t in result}
+    assert t1.id in ids
+    assert t3.id in ids
+    assert t2.id not in ids
+    result_all = tm.list_pending_tasks_for_agent(
+        "agent1", pool_ids=None, capabilities=None, topics=[topic_a, topic_b],
+    )
+    assert len(result_all) == 3
+
+
+def test_list_pending_tasks_for_agent_sort_by_priority():
+    """When sort_by_priority is True, higher priority tasks come first; tiebreak by task id."""
+    tm = TaskManager()
+    t_low = Task(priority=0)
+    t_high = Task(priority=10)
+    t_mid = Task(priority=5)
+    tm.submit(t_low)
+    tm.submit(t_high)
+    tm.submit(t_mid)
+    result = tm.list_pending_tasks_for_agent(
+        "agent1", pool_ids=None, capabilities=None, sort_by_priority=True,
+    )
+    assert [t.priority for t in result] == [10, 5, 0]
+    assert result[0].id == t_high.id
+    assert result[1].id == t_mid.id
+    assert result[2].id == t_low.id
+
+
+def test_task_default_priority():
+    """Task has priority=0 by default for backward compatibility."""
+    t = Task()
+    assert t.priority == 0
 
 
 def test_cancel_task():

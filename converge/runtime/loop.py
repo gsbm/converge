@@ -285,10 +285,15 @@ class AgentRuntime:
                 if self.pool_manager is not None:
                     pool_ids = self.pool_manager.get_pools_for_agent(self.agent.id)
                     capabilities = getattr(self.agent, "capabilities", None) or []
+                    topics = None
+                    if self.agent_descriptor is not None:
+                        topics = self.agent_descriptor.topics
                     tasks = self.task_manager.list_pending_tasks_for_agent(
                         self.agent.id,
                         pool_ids=pool_ids,
                         capabilities=capabilities,
+                        topics=topics,
+                        sort_by_priority=True,
                     )
                 else:
                     tasks = self.task_manager.list_pending_tasks()
@@ -363,10 +368,15 @@ class AgentRuntime:
                 if self.pool_manager is not None:
                     pool_ids = self.pool_manager.get_pools_for_agent(self.agent.id)
                     capabilities = getattr(self.agent, "capabilities", None) or []
+                    topics = None
+                    if self.agent_descriptor is not None:
+                        topics = self.agent_descriptor.topics
                     tasks = self.task_manager.list_pending_tasks_for_agent(
                         self.agent.id,
                         pool_ids=pool_ids,
                         capabilities=capabilities,
+                        topics=topics,
+                        sort_by_priority=True,
                     )
                 else:
                     tasks = self.task_manager.list_pending_tasks()

@@ -1,9 +1,12 @@
 import asyncio
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from converge.core.store import Store
 from converge.core.task import Task, TaskState
+
+if TYPE_CHECKING:
+    from converge.core.topic import Topic
 
 
 class TaskManager:
@@ -278,6 +281,9 @@ class TaskManager:
         agent_id: str,
         pool_ids: list[str] | None = None,
         capabilities: list[str] | None = None,
+        topics: "list[Topic] | None" = None,
+        *,
+        sort_by_priority: bool = False,
     ) -> list[Task]:
         """
         List pending tasks visible to an agent given its pool membership and capabilities.
@@ -287,6 +293,10 @@ class TaskManager:
         have all of them (required_capabilities subset of capabilities). When pool_ids
         or capabilities is None, that filter is not applied (backward compatible).
 
+        When topics is provided, only tasks whose topic is None (visible to all) or whose
+        topic is in the given list are included. When sort_by_priority is True, tasks are
+        returned in descending priority order with a stable tiebreak by task id.
+
         Args:
             agent_id (str): The agent fingerprint (used for consistency; filtering is by
                 pool_ids and capabilities).
@@ -294,6 +304,9 @@ class TaskManager:
                 filter is not applied.
             capabilities (List[str] | None): Capability names the agent has. If None,
                 required_capabilities filter is not applied.
+            topics (List[Topic] | None): If set, only tasks with no topic or with topic in
+                this list are included.
+            sort_by_priority (bool): If True, sort by task.priority descending then task.id.
 
         Returns:
             List[Task]: Pending tasks that the agent is allowed to see.
@@ -302,6 +315,7 @@ class TaskManager:
         result = []
         agent_cap_set = set(capabilities) if capabilities is not None else None
         agent_pool_set = set(pool_ids) if pool_ids is not None else None
+        topic_list = list(topics) if topics else None
         for task in pending:
             if (
                 task.pool_id is not None
@@ -315,5 +329,9 @@ class TaskManager:
                 and not set(task.required_capabilities).issubset(agent_cap_set)
             ):
                 continue
+            if topic_list is not None and task.topic is not None and task.topic not in topic_list:
+                continue
             result.append(task)
+        if sort_by_priority:
+            result.sort(key=lambda t: (-t.priority, t.id))
         return result

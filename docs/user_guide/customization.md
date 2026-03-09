@@ -17,6 +17,56 @@ The framework is designed so that most components can be replaced or extended fo
 - **Custom decision types**: Define a new `Decision` subclass and register an async handler with `StandardExecutor(..., custom_handlers={MyDecision: my_async_handler})`. The handler receives the decision instance; run your logic and return. You can also pass `executor_kwargs={"custom_handlers": {...}}` when constructing the runtime.
 - **Safety**: `safety_policy=(ResourceLimits, ActionPolicy)` to restrict decision types and validate task resources.
 - **Coordination**: Optional `bidding_protocols`, `negotiation_protocol`, `delegation_protocol`, `votes_store` for built-in decision types.
+
+## Protocol lifecycle and wiring
+
+Bidding, negotiation, delegation, and votes are **opt-in**. The runtime does not create or inject these by default; you instantiate and pass them when your agents need the corresponding decision types.
+
+**When to use**
+
+- **NegotiationProtocol**: When agents can emit `Propose`, `AcceptProposal`, `RejectProposal` (e.g. multi-step agreements). Create one instance and pass it to the executor; sessions are identified by `session_id` in decisions.
+- **BiddingProtocol**: When agents submit bids in auctions. Create one protocol per auction (or a factory) and pass a dict `auction_id -> BiddingProtocol` as `bidding_protocols`.
+- **DelegationProtocol**: When agents can `Delegate` or `RevokeDelegation`. One shared instance is typical; the protocol tracks delegation by `delegation_id`.
+- **votes_store**: A dict `vote_id -> list of (agent_id, option)` so the executor can record `Vote` decisions. Use a shared store (e.g. in-memory dict or one backed by your Store) when multiple runtimes participate in the same votes.
+
+**Scoping**
+
+- **Per session**: Negotiation is session-scoped via `session_id`; create one `NegotiationProtocol` and use different session IDs per negotiation.
+- **Per pool**: You can key protocols by pool (e.g. `bidding_protocols` keyed by pool or auction_id that encodes pool) if each pool has its own auctions.
+- **Global**: A single `negotiation_protocol`, `delegation_protocol`, or `votes_store` shared by all runtimes is common when all agents participate in the same coordination.
+
+**Wiring into the runtime**
+
+Pass protocol instances via `executor_kwargs` when constructing the runtime; the runtime builds the default `StandardExecutor` with these kwargs:
+
+```python
+from converge.coordination.bidding import BiddingProtocol
+from converge.coordination.negotiation import NegotiationProtocol
+from converge.coordination.delegation import DelegationProtocol
+
+negotiation = NegotiationProtocol()
+delegation = DelegationProtocol()
+votes_store = {}  # or a dict-like backed by your Store
+bidding_protocols = {"main_auction": BiddingProtocol(...)}
+
+runtime = AgentRuntime(
+    agent=agent,
+    transport=transport,
+    task_manager=task_manager,
+    pool_manager=pool_manager,
+    executor_kwargs={
+        "negotiation_protocol": negotiation,
+        "delegation_protocol": delegation,
+        "votes_store": votes_store,
+        "bidding_protocols": bidding_protocols,
+    },
+)
+```
+
+Agents that emit `Propose`, `Vote`, `SubmitBid`, or `Delegate` will have those decisions executed only when the corresponding protocol or store is provided; otherwise the executor logs that the decision was ignored.
+
+### Other executor options
+
 - **Tools**: `tool_registry` (ToolRegistry) for `InvokeTool`; implement the Tool protocol (`name`, `run(params)`). Optional `tool_timeout_sec` and `tool_allowlist` (set) on StandardExecutor for execution timeout and allowlist. See [Security](../guides/security.md).
 
 ## Agent

@@ -79,6 +79,9 @@ class AgentRuntime:
         claim_ttl_interval_sec: float | None = None,
         task_poll_interval_sec: float | None = None,
         max_tool_loop_iterations: int = 5,
+        scheduler_timeout_sec: float = 1.0,
+        task_refresh_interval_sec: float | None = 0.5,
+        pool_cache_ttl_sec: float | None = 1.0,
     ):
         """
         Initialize the agent runtime.
@@ -133,6 +136,10 @@ class AgentRuntime:
                 agent has changed and calls scheduler.notify() so the main loop wakes and processes
                 tasks sooner. Ignored if task_manager is None.
             max_tool_loop_iterations: Max ReAct tool loop iterations (run InvokeTool, feed result back to decide). 0 disables.
+            scheduler_timeout_sec: Max seconds to wait in scheduler.wait_for_work() before periodic wake.
+            task_refresh_interval_sec: Optional interval for refreshing task visibility from shared store
+                when polling for tasks. None disables periodic refresh (cache-only reads).
+            pool_cache_ttl_sec: Optional TTL for cached pool membership lookups. None disables caching.
         """
         self.agent = agent
         self.transport = transport
@@ -160,9 +167,15 @@ class AgentRuntime:
         self.claim_ttl_interval_sec = claim_ttl_interval_sec
         self.task_poll_interval_sec = task_poll_interval_sec
         self.max_tool_loop_iterations = max_tool_loop_iterations
+        self.scheduler_timeout_sec = scheduler_timeout_sec
+        self.task_refresh_interval_sec = task_refresh_interval_sec
+        self.pool_cache_ttl_sec = pool_cache_ttl_sec
         self._last_claim_ttl_ts: float = 0.0
         self._task_poll_task: asyncio.Task | None = None
         self._last_pending_task_ids: frozenset[str] | None = None
+        self._last_task_refresh_ts: float = 0.0
+        self._cached_pool_ids: list[str] | None = None
+        self._pool_cache_ts: float = 0.0
 
         from .scheduler import Scheduler
         self.pool_manager = pool_manager
@@ -285,21 +298,7 @@ class AgentRuntime:
                     break
                 if self.task_manager is None:
                     continue
-                if self.pool_manager is not None:
-                    pool_ids = self.pool_manager.get_pools_for_agent(self.agent.id)
-                    capabilities = getattr(self.agent, "capabilities", None) or []
-                    topics = None
-                    if self.agent_descriptor is not None:
-                        topics = self.agent_descriptor.topics
-                    tasks = self.task_manager.list_pending_tasks_for_agent(
-                        self.agent.id,
-                        pool_ids=pool_ids,
-                        capabilities=capabilities,
-                        topics=topics,
-                        sort_by_priority=True,
-                    )
-                else:
-                    tasks = self.task_manager.list_pending_tasks()
+                tasks = self._get_visible_tasks(force_refresh=True)
                 current_ids = frozenset(t.id for t in tasks)
                 if (
                     self._last_pending_task_ids is not None
@@ -309,6 +308,59 @@ class AgentRuntime:
                 self._last_pending_task_ids = current_ids
         except asyncio.CancelledError:
             pass
+
+    def _should_refresh_tasks(self, *, force: bool = False) -> bool:
+        if force:
+            self._last_task_refresh_ts = time.monotonic()
+            return True
+        if self.task_refresh_interval_sec is None:
+            return False
+        now = time.monotonic()
+        if now - self._last_task_refresh_ts >= self.task_refresh_interval_sec:
+            self._last_task_refresh_ts = now
+            return True
+        return False
+
+    def _get_pool_ids_for_agent(self, *, force: bool = False) -> list[str]:
+        if self.pool_manager is None:
+            return []
+        if self.pool_cache_ttl_sec is None:
+            return self.pool_manager.get_pools_for_agent(self.agent.id)
+        now = time.monotonic()
+        if (
+            not force
+            and self._cached_pool_ids is not None
+            and now - self._pool_cache_ts < self.pool_cache_ttl_sec
+        ):
+            return self._cached_pool_ids
+        pool_ids = self.pool_manager.get_pools_for_agent(self.agent.id)
+        self._cached_pool_ids = pool_ids
+        self._pool_cache_ts = now
+        return pool_ids
+
+    def _invalidate_pool_cache(self) -> None:
+        self._cached_pool_ids = None
+        self._pool_cache_ts = 0.0
+
+    def _get_visible_tasks(self, *, force_refresh: bool = False) -> list[Any]:
+        if self.task_manager is None:
+            return []
+        refresh = self._should_refresh_tasks(force=force_refresh)
+        if self.pool_manager is not None:
+            pool_ids = self._get_pool_ids_for_agent(force=force_refresh)
+            capabilities = getattr(self.agent, "capabilities", None) or []
+            topics = None
+            if self.agent_descriptor is not None:
+                topics = self.agent_descriptor.topics
+            return self.task_manager.list_pending_tasks_for_agent(
+                self.agent.id,
+                pool_ids=pool_ids,
+                capabilities=capabilities,
+                topics=topics,
+                sort_by_priority=True,
+                refresh_from_store=refresh,
+            )
+        return self.task_manager.list_pending_tasks(refresh_from_store=refresh)
 
     async def _run_loop(self) -> None:
         """The main execution loop."""
@@ -357,7 +409,7 @@ class AgentRuntime:
             # 1. Wait for work (Event driven)
             # Wake up at least every few seconds for health checks or task polling if tasks aren't event-driven yet
             # (Tasks usually come from messages or internal generation)
-            await self.scheduler.wait_for_work(timeout=1.0)
+            await self.scheduler.wait_for_work(timeout=self.scheduler_timeout_sec)
 
             if not self.running:
                 break
@@ -366,23 +418,7 @@ class AgentRuntime:
             messages = self.inbox.poll()
 
             # 3. Poll task queue (scoped by pool/capabilities when pool_manager is set)
-            tasks: list[Any] = []
-            if self.task_manager is not None:
-                if self.pool_manager is not None:
-                    pool_ids = self.pool_manager.get_pools_for_agent(self.agent.id)
-                    capabilities = getattr(self.agent, "capabilities", None) or []
-                    topics = None
-                    if self.agent_descriptor is not None:
-                        topics = self.agent_descriptor.topics
-                    tasks = self.task_manager.list_pending_tasks_for_agent(
-                        self.agent.id,
-                        pool_ids=pool_ids,
-                        capabilities=capabilities,
-                        topics=topics,
-                        sort_by_priority=True,
-                    )
-                else:
-                    tasks = self.task_manager.list_pending_tasks()
+            tasks = self._get_visible_tasks()
 
             # 4. Decide (with optional ReAct tool loop)
             if messages or tasks:
@@ -394,10 +430,16 @@ class AgentRuntime:
                         decide_kwargs: dict[str, Any] = {}
                         if tool_observations:
                             decide_kwargs["tool_observations"] = tool_observations
-                        if inspect.iscoroutinefunction(self.agent.decide):
+                        adecide = getattr(self.agent, "adecide", None)
+                        if adecide is not None and inspect.iscoroutinefunction(adecide):
+                            decisions = cast(list[Any], await adecide(messages, tasks, **decide_kwargs))
+                        elif inspect.iscoroutinefunction(self.agent.decide):
                             decisions = cast(list[Any], await self.agent.decide(messages, tasks, **decide_kwargs))
                         else:
-                            decisions = cast(list[Any], self.agent.decide(messages, tasks, **decide_kwargs))
+                            decisions = cast(
+                                list[Any],
+                                await asyncio.to_thread(self.agent.decide, messages, tasks, **decide_kwargs),
+                            )
 
                     from converge.core.decisions import Decision, InvokeTool
                     invoke_only = [d for d in decisions if isinstance(d, InvokeTool)]
@@ -406,6 +448,10 @@ class AgentRuntime:
                     if other_decisions and executor:
                         with trace("executor.execute"):
                             await executor.execute(other_decisions)
+                        from converge.core.decisions import CreatePool, JoinPool, LeavePool
+
+                        if any(isinstance(d, (JoinPool, LeavePool, CreatePool)) for d in other_decisions):
+                            self._invalidate_pool_cache()
                     elif other_decisions:
                         for decision in other_decisions:
                             await self._execute_decision_fallback(decision)

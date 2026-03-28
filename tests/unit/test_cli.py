@@ -47,6 +47,18 @@ def test_cli_load_config_env_agents_port_pool_discovery():
             os.environ.pop(k, None)
 
 
+def test_cli_load_config_env_store_backend_and_path():
+    os.environ["CONVERGE_STORE_BACKEND"] = "sqlite"
+    os.environ["CONVERGE_STORE_PATH"] = "/tmp/converge-test.sqlite3"
+    try:
+        cfg = _load_config(None)
+        assert cfg.get("store_backend") == "sqlite"
+        assert cfg.get("store_path") == "/tmp/converge-test.sqlite3"
+    finally:
+        os.environ.pop("CONVERGE_STORE_BACKEND", None)
+        os.environ.pop("CONVERGE_STORE_PATH", None)
+
+
 def test_cli_load_config_file_yaml():
     import importlib.util
 
@@ -116,6 +128,7 @@ def test_validate_config_accepts_valid_config():
     _validate_config({})
     _validate_config({"transport": "local", "port": 8888, "agents": 2})
     _validate_config({"port": 9999, "pool_id": "p1", "discovery_store": "memory"})
+    _validate_config({"store_backend": "sqlite", "store_path": "/tmp/converge.db"})
 
 
 def test_validate_config_allows_unknown_keys():

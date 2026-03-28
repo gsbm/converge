@@ -95,7 +95,7 @@ Agents that emit `Propose`, `Vote`, `SubmitBid`, or `Delegate` will have those d
 
 ## Extensions
 
-- **LLM provider**: Implement `chat(messages, **kwargs) -> str`; optionally `chat_stream(...) -> AsyncIterator[str]`. Used by LLMAgent.
+- **LLM provider**: Implement `chat(messages, **kwargs) -> str`; optionally `achat(messages, **kwargs) -> str` for async runtimes and `chat_stream(...) -> AsyncIterator[str]`. Used by LLMAgent.
 - **Tools**: Implement the Tool protocol and register on a `ToolRegistry`.
 
 ## Summary table

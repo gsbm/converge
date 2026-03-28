@@ -18,8 +18,8 @@ def test_cli_run_multi_agent_local_in_process():
 
     store = MemoryStore()
     discovery_service = DiscoveryService(store=store)
-    pool_manager = PoolManager(store=MemoryStore())
-    task_manager = TaskManager(store=MemoryStore())
+    pool_manager = PoolManager(store=store)
+    task_manager = TaskManager(store=store)
     pool = pool_manager.create_pool({"id": "test-pool"})
 
     runtimes = []

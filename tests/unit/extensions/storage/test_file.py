@@ -86,4 +86,11 @@ def test_filestore_additional(tmp_path):
     store.delete("none")
     store.put("exists", 1)
     store.delete("exists")
-    assert not (tmp_path / "exists").exists()
+    assert store.get("exists") is None
+
+
+def test_file_store_blocks_path_traversal_key(tmp_path):
+    store = FileStore(str(tmp_path))
+    store.put("../escape", {"ok": True})
+    assert store.get("../escape") == {"ok": True}
+    assert not (tmp_path.parent / "escape").exists()

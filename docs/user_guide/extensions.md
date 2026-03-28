@@ -38,7 +38,7 @@ pip install "converge[llm]"
 
 **Module:** `converge.extensions.llm`
 
-- **`LLMAgent(identity, provider, system_prompt=None)`**: Agent that calls `provider.chat(messages)` and parses the response as a JSON array of decisions.
+- **`LLMAgent(identity, provider, system_prompt=None)`**: Agent that calls `provider.chat(messages)` (or `provider.achat(messages)` when available in async runtimes) and parses the response as a JSON array of decisions.
 - **`OpenAIProvider(api_key=None, model="gpt-4o-mini")`**: OpenAI API (uses `OPENAI_API_KEY` if api_key is None).
 - **`AnthropicProvider(api_key=None, model="claude-sonnet-4-20250514")`**: Anthropic API.
 - **`MistralProvider(api_key=None, model="mistral-small-latest")`**: Mistral AI API.

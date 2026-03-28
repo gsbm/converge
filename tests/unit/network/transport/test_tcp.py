@@ -1,6 +1,7 @@
 """Tests for converge.network.transport.tcp."""
 
 import asyncio
+import socket
 import struct
 import time
 from unittest.mock import AsyncMock, MagicMock
@@ -10,6 +11,22 @@ import pytest
 from converge.core.message import Message
 from converge.core.topic import Topic
 from converge.network.transport.tcp import TcpTransport
+
+
+def _can_bind_localhost() -> bool:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _can_bind_localhost(),
+    reason="TCP socket bind not permitted in this environment",
+)
 
 
 @pytest.mark.asyncio

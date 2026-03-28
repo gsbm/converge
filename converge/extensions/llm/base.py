@@ -27,3 +27,12 @@ class LLMProvider(Protocol):
             The model's response text.
         """
         ...
+
+    async def achat(self, messages: list[dict[str, Any]], **kwargs: Any) -> str:
+        """
+        Optional async variant for event-loop friendly providers.
+
+        Providers may omit this method; callers can fallback to running chat()
+        in a worker thread.
+        """
+        ...

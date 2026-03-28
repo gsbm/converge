@@ -305,6 +305,26 @@ async def test_runtime_agent_decide_coroutine():
 
 
 @pytest.mark.asyncio
+async def test_runtime_agent_adecide_coroutine():
+    identity = Identity.generate()
+
+    class AsyncDecideAgent(Agent):
+        def decide(self, messages, tasks):
+            return []
+
+        async def adecide(self, messages, tasks, **kwargs):
+            return []
+
+    agent = AsyncDecideAgent(identity)
+    transport = LocalTransport(identity.fingerprint)
+    runtime = AgentRuntime(agent, transport)
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    await runtime.stop()
+    assert not runtime.running
+
+
+@pytest.mark.asyncio
 async def test_execute_decision_fallback_non_message():
     """_execute_decision_fallback with decision that has no 'sender' (not a Message) does not crash."""
     identity = Identity.generate()

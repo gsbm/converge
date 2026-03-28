@@ -64,3 +64,20 @@ def test_message_decrypt_payload_not_encrypted():
     key = b"0" * 32
     result = msg.decrypt_payload(key)
     assert result is msg
+
+
+def test_message_signing_canonical_payload_order():
+    sender = Identity.generate()
+    payload_a = {"b": 2, "a": {"z": 1, "y": 2}}
+    payload_b = {"a": {"y": 2, "z": 1}, "b": 2}
+    m1 = Message(sender=sender.fingerprint, payload=payload_a).sign(sender)
+    m2 = Message(
+        id=m1.id,
+        sender=sender.fingerprint,
+        payload=payload_b,
+        task_id=m1.task_id,
+        timestamp=m1.timestamp,
+        topics=m1.topics,
+        recipient=m1.recipient,
+    ).sign(sender)
+    assert m1.signature == m2.signature

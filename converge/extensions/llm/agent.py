@@ -1,10 +1,11 @@
 """LLM-driven agent that uses an LLM provider for decide()."""
 
+import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import re
-import time
 from typing import Any
 
 from converge.core.agent import Agent
@@ -302,7 +303,36 @@ class LLMAgent(Agent):
                     decisions.append(InvokeTool(tool_name=tool_name, params=params))
         return decisions, True
 
-    def decide(self, messages: list[Any], tasks: list[Any], tool_observations: list[dict[str, Any]] | None = None, **kwargs: Any) -> list[Any]:
+    async def _call_provider_with_retry(self, chat_messages: list[dict[str, Any]], **extra: Any) -> str:
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                if self._use_structured_output:
+                    extra = {
+                        **extra,
+                        "use_structured_output": True,
+                        "emit_decisions_tool": EMIT_DECISIONS_TOOL,
+                    }
+                achat = getattr(self.provider, "achat", None)
+                if inspect.iscoroutinefunction(achat):
+                    return await achat(chat_messages, **extra)
+                return await asyncio.to_thread(self.provider.chat, chat_messages, **extra)
+            except Exception as e:
+                last_err = e
+                err_str = str(e).lower()
+                if attempt < 2 and ("rate" in err_str or "timeout" in err_str or "429" in err_str or "503" in err_str):
+                    await asyncio.sleep(2**attempt)
+                    continue
+                raise
+        raise last_err or RuntimeError("no response")
+
+    async def adecide(
+        self,
+        messages: list[Any],
+        tasks: list[Any],
+        tool_observations: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
         """
         Use the LLM to produce decisions from messages and tasks.
 
@@ -318,29 +348,8 @@ class LLMAgent(Agent):
         repair_prompt = "Your previous response was not valid JSON. Output ONLY a valid JSON array of decisions, no other text."
         chat_messages = self._format_messages_and_tasks(messages, tasks, tool_observations=tool_observations)
 
-        def _call_provider(**extra: Any) -> str:
-            last_err: Exception | None = None
-            for attempt in range(3):
-                try:
-                    if self._use_structured_output:
-                        return self.provider.chat(
-                            chat_messages,
-                            use_structured_output=True,
-                            emit_decisions_tool=EMIT_DECISIONS_TOOL,
-                            **extra,
-                        )
-                    return self.provider.chat(chat_messages, **extra)
-                except Exception as e:
-                    last_err = e
-                    err_str = str(e).lower()
-                    if attempt < 2 and ("rate" in err_str or "timeout" in err_str or "429" in err_str or "503" in err_str):
-                        time.sleep(2 ** attempt)
-                        continue
-                    raise
-            raise last_err or RuntimeError("no response")
-
         try:
-            response = _call_provider()
+            response = await self._call_provider_with_retry(chat_messages)
         except Exception as e:
             logger.warning("LLM provider error: %s", e)
             if self._on_decide_error is not None:
@@ -351,7 +360,7 @@ class LLMAgent(Agent):
         if not parsed_ok and response.strip():
             chat_messages.append({"role": "user", "content": repair_prompt})
             try:
-                response = _call_provider()
+                response = await self._call_provider_with_retry(chat_messages)
             except Exception as e:
                 logger.warning("LLM provider error on repair: %s", e)
                 if self._on_decide_error is not None:
@@ -365,3 +374,17 @@ class LLMAgent(Agent):
                 self._memory.append("user", last_user)
                 self._memory.append("assistant", response)
         return decisions
+
+    def decide(self, messages: list[Any], tasks: list[Any], tool_observations: list[dict[str, Any]] | None = None, **kwargs: Any) -> list[Any]:
+        """
+        Synchronous wrapper for compatibility outside async runtimes.
+
+        In async runtimes, use ``await adecide(...)``.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(
+                self.adecide(messages, tasks, tool_observations=tool_observations, **kwargs),
+            )
+        raise RuntimeError("LLMAgent.decide() called inside an active event loop; use await adecide().")

@@ -74,6 +74,8 @@ Delivery is **best-effort** by default: no built-in at-least-once or exactly-onc
 
 **Recovery:** Pool and task state are restored on restart by constructing PoolManager and TaskManager with the **same store** used before shutdown. Inbox and in-flight messages are best-effort (no persistence unless the transport supports replay). The runtime supports an optional **checkpoint_store** and **checkpoint_interval_sec** to write `agent_id -> last_activity_ts` for observability; this does not change processing order or replay.
 
+**Task visibility freshness:** In shared-store deployments, task listing APIs support eager refresh from store (`refresh_from_store=True`) for stronger cross-process visibility; default listing remains eventual-consistency oriented for lower overhead.
+
 ## CLI
 
-The CLI (`converge run`) can run one or more agents with configurable transport (local or TCP), optional pool and discovery store. Config is read from environment variables and, if the `cli` extra is installed, from an optional YAML or TOML file. Keys include `transport`, `host`, `port`, `agents`, `pool_id`, and `discovery_store`. See [CLI and configuration](../user_guide/cli_and_config.md).
+The CLI (`converge run`) can run one or more agents with configurable transport (local or TCP), optional pool and discovery store, and explicit store backend selection. Config is read from environment variables and, if the `cli` extra is installed, from an optional YAML or TOML file. Keys include `transport`, `host`, `port`, `agents`, `pool_id`, `discovery_store` (legacy), `store_backend`, and `store_path`. See [CLI and configuration](../user_guide/cli_and_config.md).

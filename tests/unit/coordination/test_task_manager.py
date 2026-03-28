@@ -1,6 +1,7 @@
 """Tests for converge.coordination.task_manager."""
 
 import asyncio
+import time
 
 import pytest
 
@@ -364,3 +365,24 @@ async def test_wait_until_done_returns_immediately_if_already_completed():
     assert result is not None
     assert result.state == TaskState.COMPLETED
     assert result.result == "done"
+
+
+def test_list_pending_tasks_refresh_from_shared_store():
+    store = MemoryStore()
+    tm1 = TaskManager(store)
+    tm2 = TaskManager(store)
+    task = Task(objective={"kind": "remote"})
+    tm1.submit(task)
+
+    assert task.id not in {t.id for t in tm2.list_pending_tasks()}
+    refreshed = tm2.list_pending_tasks(refresh_from_store=True)
+    assert task.id in {t.id for t in refreshed}
+
+
+def test_release_expired_claims_no_duplicate_ids():
+    tm = TaskManager()
+    task = Task(objective={"x": 1}, constraints={"claim_ttl_sec": 0})
+    task_id = tm.submit(task)
+    assert tm.claim("agent1", task_id) is True
+    released = tm.release_expired_claims(time.monotonic())
+    assert released == [task_id]

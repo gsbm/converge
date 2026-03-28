@@ -25,6 +25,24 @@ class TaskManager:
         self.pending_task_ids: set[str] = set()
         self._completion_events: dict[str, asyncio.Event] = {}
 
+    def refresh_from_store(self) -> None:
+        """
+        Refresh in-memory task cache from the backing store.
+
+        Freshness model: eventual consistency. Callers can request this refresh
+        before listing tasks when running in multi-process/shared-store setups.
+        """
+        pending: set[str] = set()
+        for key in self.store.list("task:"):
+            task = self.store.get(key)
+            if not isinstance(task, Task):
+                continue
+            task_id = key[5:] if key.startswith("task:") else key
+            self.tasks[task_id] = task
+            if task.state == TaskState.PENDING:
+                pending.add(task_id)
+        self.pending_task_ids = pending
+
     def submit(self, task: Task) -> str:
         """
         Submit a new task to the system.
@@ -129,6 +147,7 @@ class TaskManager:
         task.state = TaskState.FAILED
         task.result = reason
         task.claimed_at = None
+        self.pending_task_ids.discard(task_id)
         self.store.put(f"task:{task.id}", task)
         if task_id in self._completion_events:
             self._completion_events[task_id].set()
@@ -143,34 +162,18 @@ class TaskManager:
         Returns:
             List of task IDs that were released.
         """
-        released = []
+        released: list[str] = []
         ttl_key = "claim_ttl_sec"
         seen_ids = set(self.tasks.keys())
         for key in self.store.list("task:"):
             task_id = key[5:] if key.startswith("task:") else key
             if task_id in seen_ids:
                 continue
-            seen_ids.add(task_id)
             task = self.store.get(key)
-            if not task or task.state != TaskState.ASSIGNED or task.claimed_at is None:
-                continue
-            self.tasks[task_id] = task
-            ttl = task.constraints.get(ttl_key)
-            if ttl is None:
-                continue
-            try:
-                ttl_sec = float(ttl)
-            except (TypeError, ValueError):
-                continue
-            if now_ts - task.claimed_at >= ttl_sec:
-                task.state = TaskState.PENDING
-                task.assigned_to = None
-                task.claimed_at = None
-                self.pending_task_ids.add(task_id)
-                self.store.put(f"task:{task.id}", task)
-                released.append(task_id)
-        for task_id in list(self.tasks.keys()):
-            task = self.tasks[task_id]
+            if isinstance(task, Task):
+                self.tasks[task_id] = task
+                seen_ids.add(task_id)
+        for task_id, task in list(self.tasks.items()):
             if task.state != TaskState.ASSIGNED or task.claimed_at is None:
                 continue
             ttl = task.constraints.get(ttl_key)
@@ -211,6 +214,7 @@ class TaskManager:
 
         task.result = result
         task.state = TaskState.COMPLETED
+        self.pending_task_ids.discard(task_id)
         self.store.put(f"task:{task.id}", task)
         if task_id in self._completion_events:
             self._completion_events[task_id].set()
@@ -267,13 +271,15 @@ class TaskManager:
             self._completion_events.pop(task_id, None)
         return self.get_task(task_id)
 
-    def list_pending_tasks(self) -> list[Task]:
+    def list_pending_tasks(self, *, refresh_from_store: bool = False) -> list[Task]:
         """
         List all tasks currently in the PENDING state.
 
         Returns:
             List[Task]: A list of pending tasks.
         """
+        if refresh_from_store:
+            self.refresh_from_store()
         return [self.tasks[tid] for tid in self.pending_task_ids if tid in self.tasks]
 
     def list_pending_tasks_for_agent(
@@ -284,6 +290,7 @@ class TaskManager:
         topics: "list[Topic] | None" = None,
         *,
         sort_by_priority: bool = False,
+        refresh_from_store: bool = False,
     ) -> list[Task]:
         """
         List pending tasks visible to an agent given its pool membership and capabilities.
@@ -311,7 +318,7 @@ class TaskManager:
         Returns:
             List[Task]: Pending tasks that the agent is allowed to see.
         """
-        pending = self.list_pending_tasks()
+        pending = self.list_pending_tasks(refresh_from_store=refresh_from_store)
         result = []
         agent_cap_set = set(capabilities) if capabilities is not None else None
         agent_pool_set = set(pool_ids) if pool_ids is not None else None

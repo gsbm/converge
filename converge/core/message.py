@@ -13,6 +13,16 @@ from .topic import Topic
 _ENCRYPTED_KEY = "_encrypted"
 
 
+def _canonicalize(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _canonicalize(value[k]) for k in sorted(value)}
+    if isinstance(value, list):
+        return [_canonicalize(v) for v in value]
+    if isinstance(value, tuple):
+        return [_canonicalize(v) for v in value]
+    return value
+
+
 @dataclass(frozen=True)
 class Message:
     """
@@ -92,11 +102,11 @@ class Message:
             "sender": self.sender,
             "recipient": self.recipient,
             "topics": [str(t) for t in self.topics],
-            "payload": self.payload,
+            "payload": _canonicalize(self.payload),
             "task_id": self.task_id,
             "timestamp": self.timestamp,
         }
-        return msgpack.packb(data) or b""
+        return msgpack.packb(data, use_bin_type=True) or b""
 
     def to_bytes(self) -> bytes:
         """Serialize message to bytes using msgpack."""
@@ -105,14 +115,14 @@ class Message:
         data = self.to_dict()
         # Ensure signature is bytes
         data["signature"] = data.get("signature") or b""
-        return msgpack.packb(data) or b""
+        return msgpack.packb(data, use_bin_type=True) or b""
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "Message":
         """Deserialize message from msgpack bytes."""
         import msgpack
 
-        unpacked = msgpack.unpackb(data)
+        unpacked = msgpack.unpackb(data, raw=False)
         if isinstance(unpacked, dict):
             return cls.from_dict(unpacked)
         raise ValueError("Invalid message bytes")

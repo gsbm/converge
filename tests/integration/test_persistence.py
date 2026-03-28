@@ -1,8 +1,5 @@
 """Integration tests: storage persistence."""
 
-import shutil
-from pathlib import Path
-
 from converge.coordination.pool_manager import PoolManager
 from converge.extensions.storage.file import FileStore
 from converge.extensions.storage.memory import MemoryStore
@@ -30,11 +27,8 @@ def test_memory_store():
     assert "key2" in prefixed
 
 
-def test_file_store():
-    path = Path("./test_data")
-    if path.exists():
-        shutil.rmtree(path)
-
+def test_file_store(tmp_path):
+    path = tmp_path / "test_data"
     store = FileStore(str(path))
 
     data = {"a": 1, "b": 2}
@@ -49,8 +43,6 @@ def test_file_store():
     assert "obj1" in keys
     assert "obj2" in keys
 
-    if path.exists():
-        shutil.rmtree(path)
 
 
 def test_pool_manager_persistence():

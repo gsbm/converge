@@ -36,6 +36,8 @@ Configuration keys can be set via environment variables. Names follow the patter
 | `CONVERGE_AGENTS` | Number of agents to run in this process (default `1`). When > 1, a shared pool manager and task manager are created. |
 | `CONVERGE_POOL_ID` | If set, a pool with this id is created and all agents join it. |
 | `CONVERGE_DISCOVERY_STORE` | If set to `memory`, an in-memory discovery store is used and agents register on start; if a path, a file-based store is used. |
+| `CONVERGE_STORE_BACKEND` | Optional explicit store backend: `memory`, `file`, `sqlite`, or `redis`. |
+| `CONVERGE_STORE_PATH` | Backend-specific location/URL (file path, sqlite db path, or redis URL). |
 | `CONVERGE_CONFIG` | Default config file path (same as `-c`). |
 
 File-based config is merged with env: file values override env when both specify the same key.
@@ -44,7 +46,7 @@ File-based config is merged with env: file values override env when both specify
 
 Supported formats: **YAML** (`.yaml`, `.yml`) and **TOML** (`.toml`). YAML parsing requires `pyyaml` (install with `converge[cli]`). TOML uses the standard library `tomllib` (Python 3.11+).
 
-The file must evaluate to a single mapping (dict). Keys: `transport`, `host`, `port`, `agents`, `pool_id`, `discovery_store`.
+The file must evaluate to a single mapping (dict). Keys: `transport`, `host`, `port`, `agents`, `pool_id`, `discovery_store`, `store_backend`, `store_path`.
 
 Example YAML (multi-agent with pool and discovery):
 
@@ -53,6 +55,7 @@ transport: local
 agents: 3
 pool_id: my-pool
 discovery_store: memory
+store_backend: memory
 ```
 
 Example YAML (TCP, single agent):
@@ -72,6 +75,8 @@ port = 8888
 agents = 2
 pool_id = "workers"
 discovery_store = "memory"
+store_backend = "sqlite"
+store_path = "/tmp/converge.sqlite3"
 ```
 
 ## Run behavior
@@ -80,10 +85,11 @@ With `converge run`, the process:
 
 1. Loads config (env + optional file).
 2. Sets logging level to DEBUG if `-v` is used.
-3. If `discovery_store` is set, creates a store (memory or file) and a `DiscoveryService`; each agent will register on start and unregister on stop.
-4. If `agents` > 1 or `pool_id` is set, creates a shared `PoolManager` and `TaskManager`; if `pool_id` is set, creates that pool and joins all agents to it.
-5. For each of `agents` (default 1): generates an identity, creates an `Agent` and transport (local or TCP with host/port), builds an `AgentDescriptor` when discovery is used, and constructs an `AgentRuntime` with pool_manager, task_manager, discovery_service, and agent_descriptor as appropriate.
-6. Starts all runtimes with `asyncio.gather`, then runs until KeyboardInterrupt.
-7. On interrupt, stops all runtimes cleanly.
+3. Creates a store from config. Preferred mode is `store_backend` + `store_path`; legacy `discovery_store` remains supported.
+4. If discovery is enabled (via `store_backend` or `discovery_store`), creates `DiscoveryService(store=...)`; each agent registers on start and unregisters on stop.
+5. If `agents` > 1 or `pool_id` is set, creates shared `PoolManager` and `TaskManager` using the same store instance for recovery consistency.
+6. For each of `agents` (default 1): generates an identity, creates an `Agent` and transport (local or TCP with host/port), builds an `AgentDescriptor` when discovery is used, and constructs an `AgentRuntime` with pool_manager, task_manager, discovery_service, and agent_descriptor as appropriate.
+7. Starts all runtimes with `asyncio.gather`, then runs until KeyboardInterrupt.
+8. On interrupt, stops all runtimes cleanly.
 
 To use WebSocket transport or custom persistence, use the Python API (see [Quick start](quickstart.md) and [API reference](../api/index.md)).

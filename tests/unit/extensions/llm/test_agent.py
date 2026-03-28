@@ -1,7 +1,7 @@
 """Tests for converge.extensions.llm.agent."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -419,3 +419,25 @@ def test_llm_agent_memory_included_in_prompt():
     assert len(call_args) >= 3
     assert call_args[1]["role"] == "user" and call_args[1]["content"] == "first"
     assert call_args[2]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_llm_agent_adecide_uses_async_provider():
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.achat = AsyncMock(return_value="[]")
+    provider.chat = MagicMock(return_value='[{"type":"ClaimTask","task_id":"x"}]')
+    agent = LLMAgent(identity, provider=provider)
+    decisions = await agent.adecide([], [])
+    assert decisions == []
+    assert provider.achat.called
+    assert not provider.chat.called
+
+
+@pytest.mark.asyncio
+async def test_llm_agent_decide_raises_inside_running_loop():
+    identity = Identity.generate()
+    provider = MockProvider(["[]"])
+    agent = LLMAgent(identity, provider=provider)
+    with pytest.raises(RuntimeError, match="active event loop"):
+        agent.decide([], [])

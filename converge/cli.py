@@ -2,7 +2,7 @@
 
 Supports configurable transport (local, tcp), multiple agents in one process,
 optional pool and discovery store. Config keys: transport, host, port, agents,
-pool_id, discovery_store (path or 'memory').
+pool_id, discovery_store (legacy), store_backend, store_path.
 """
 
 import argparse
@@ -23,11 +23,22 @@ from converge.runtime.loop import AgentRuntime
 def _load_config(path: str | None) -> dict:
     """Load config from file (YAML or TOML) or env vars.
 
-    Reads transport, host, port, config, agents, pool_id, discovery_store
+    Reads transport, host, port, config, agents, pool_id, discovery_store,
+    store_backend, and store_path
     from CONVERGE_* env vars and from the config file.
     """
     config: dict = {}
-    for key in ("transport", "host", "port", "config", "agents", "pool_id", "discovery_store"):
+    for key in (
+        "transport",
+        "host",
+        "port",
+        "config",
+        "agents",
+        "pool_id",
+        "discovery_store",
+        "store_backend",
+        "store_path",
+    ):
         env_key = f"CONVERGE_{key.upper()}"
         val = os.environ.get(env_key)
         if val is not None:
@@ -78,6 +89,8 @@ class _RunConfigSchema(BaseModel):
     agents: int | None = None
     pool_id: str | None = None
     discovery_store: str | None = None
+    store_backend: str | None = None
+    store_path: str | None = None
     config: str | None = None
 
 
@@ -97,6 +110,48 @@ def _create_transport(transport_type: str, agent_id: str, host: str, port: int):
         from converge.network.transport.tcp import TcpTransport
         return TcpTransport(host=host, port=port, identity_fingerprint=agent_id)
     return LocalTransport(agent_id)
+
+
+def _create_store(config: dict):
+    """Create a store from config, supporting legacy and explicit backend modes."""
+    backend = config.get("store_backend")
+    store_path = config.get("store_path")
+    discovery_store = config.get("discovery_store")
+
+    if backend is None:
+        if discovery_store is None:
+            return None
+        if str(discovery_store).lower() == "memory":
+            from converge.extensions.storage.memory import MemoryStore
+
+            return MemoryStore()
+        from converge.extensions.storage.file import FileStore
+
+        return FileStore(base_path=str(discovery_store))
+
+    backend_name = str(backend).strip().lower()
+    if backend_name == "memory":
+        from converge.extensions.storage.memory import MemoryStore
+
+        return MemoryStore()
+    if backend_name == "file":
+        from converge.extensions.storage.file import FileStore
+
+        path = str(store_path or discovery_store or ".converge-store")
+        return FileStore(base_path=path)
+    if backend_name == "sqlite":
+        from converge.extensions.storage.sqlite_store import SQLiteStore
+
+        path = str(store_path or discovery_store or ".converge-store.sqlite3")
+        return SQLiteStore(path=path)
+    if backend_name == "redis":
+        from converge.extensions.storage.redis_store import RedisStore
+
+        redis_url = str(store_path or discovery_store or "redis://localhost:6379/0")
+        return RedisStore(redis_url=redis_url)
+    raise ValueError(
+        "Invalid configuration: store_backend must be one of memory, file, sqlite, redis",
+    )
 
 
 def main() -> None:
@@ -131,18 +186,16 @@ def main() -> None:
         raw_agents = config.get("agents")
         num_agents: int = max(1, int(raw_agents) if raw_agents is not None else 1)
         pool_id = config.get("pool_id")
-        discovery_store_path = config.get("discovery_store")
-
-        store = None
-        discovery_service = None
-        if discovery_store_path and discovery_store_path.lower() != "memory":
-            from converge.extensions.storage.file import FileStore
-            store = FileStore(base_path=discovery_store_path)
-        elif discovery_store_path:
+        store = _create_store(config)
+        if store is None and (num_agents > 1 or pool_id):
             from converge.extensions.storage.memory import MemoryStore
+
             store = MemoryStore()
 
-        if store is not None:
+        discovery_service = None
+        if store is not None and (
+            config.get("discovery_store") is not None or config.get("store_backend") is not None
+        ):
             from converge.network.discovery import DiscoveryService
             discovery_service = DiscoveryService(store=store)
 
@@ -152,9 +205,8 @@ def main() -> None:
         if num_agents > 1 or pool_id:
             from converge.coordination.pool_manager import PoolManager
             from converge.coordination.task_manager import TaskManager
-            from converge.extensions.storage.memory import MemoryStore
-            pool_manager = PoolManager(store=MemoryStore())
-            task_manager = TaskManager(store=MemoryStore())
+            pool_manager = PoolManager(store=store)
+            task_manager = TaskManager(store=store)
             if pool_id:
                 pool = pool_manager.create_pool({"id": pool_id})
 

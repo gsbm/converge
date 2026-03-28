@@ -5,7 +5,7 @@ This section gives a minimal runnable example: two agents with cryptographic ide
 ## Prerequisites
 
 - Python 3.11+
-- `pip install converge` (or `pip install -e .` from source).
+- Install from source: `pip install -e .`.
 
 ## Example: two agents, local transport
 

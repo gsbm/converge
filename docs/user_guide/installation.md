@@ -20,17 +20,17 @@ The base package includes: core (agent, identity, message, topic, task, pool, ca
 
 | Extra | Purpose | Typical use |
 |-------|---------|-------------|
-| `converge[llm]` | OpenAI, Anthropic, and Mistral LLM providers; required for `LLMAgent` and provider classes. | LLM-driven agents. |
-| `converge[websocket]` | WebSocket transport dependency (`websockets`). | WebSocket-based transport implementation. |
-| `converge[cli]` | PyYAML for config file parsing. | Use `converge` CLI with YAML config. |
-| `converge[docs]` | Sphinx, MyST, Shibuya theme. | Build documentation locally. |
-| `converge[dev]` | pytest, coverage, ruff, pyright, pre-commit, pip-audit, and LLM providers. | Development and CI. |
+| `.[llm]` | OpenAI, Anthropic, and Mistral LLM providers; required for `LLMAgent` and provider classes. | LLM-driven agents. |
+| `.[websocket]` | WebSocket transport dependency (`websockets`). | WebSocket-based transport implementation. |
+| `.[cli]` | PyYAML for config file parsing. | Use `converge` CLI with YAML config. |
+| `.[docs]` | Sphinx, MyST, Shibuya theme. | Build documentation locally. |
+| `.[dev]` | pytest, coverage, ruff, pyright, pre-commit, pip-audit, and LLM providers. | Development and CI. |
 
 Examples:
 
 ```bash
-pip install "converge[llm]"        # All LLM providers
-pip install "converge[cli]"        # CLI with YAML config
+pip install -e ".[llm]"            # All LLM providers
+pip install -e ".[cli]"            # CLI with YAML config
 pip install -e ".[dev]"            # Development and tests
 pip install -e ".[docs]"           # Build docs: cd docs && make html
 ```

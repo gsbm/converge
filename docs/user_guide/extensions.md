@@ -33,7 +33,7 @@ key2 = derive_key("password", salt, length=32)
 The LLM extension provides an **LLMAgent** that uses an LLM to produce decisions in `decide()`. Supported providers: OpenAI, Anthropic, Mistral AI. Install all provider dependencies with:
 
 ```bash
-pip install "converge[llm]"
+pip install -e ".[llm]"
 ```
 
 **Module:** `converge.extensions.llm`
@@ -70,7 +70,7 @@ Custom system prompts can be passed as `system_prompt=...`. The agent formats in
 **RedisStore**: Redis-backed store; pickle serialization, `list(prefix)` via SCAN, atomic `put_if_absent` via SET NX. Install the optional extra:
 
 ```bash
-pip install "converge[store-backends]"
+pip install -e ".[store-backends]"
 ```
 
 Module: `converge.extensions.storage.redis_store`. Constructor: `RedisStore(redis_url="redis://localhost:6379/0", *, client=None)` (pass an existing `redis.Redis` client if desired).
@@ -86,7 +86,7 @@ Used by pool manager, task manager, and discovery service when a store is provid
 A **WebSocket transport** implementation may be present under `converge.network.transport.websocket`. Its dependency is installed with:
 
 ```bash
-pip install "converge[websocket]"
+pip install -e ".[websocket]"
 ```
 
 See the API reference and source for the exact interface and usage.

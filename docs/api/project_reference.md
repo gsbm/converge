@@ -35,7 +35,7 @@ Compact index of public modules and their role. For full signatures and docstrin
 | `converge.network.transport.local` | LocalTransport, LocalTransportRegistry: in-process, topic subscriptions, recipient/topic routing. |
 | `converge.network.transport.hooks` | HookedTransport, MessageHook: ordered pre-send/post-receive middleware wrapper. |
 | `converge.network.transport.tcp` | TcpTransport: length-prefixed msgpack, topic-based routing, connection pool. |
-| `converge.network.transport.websocket` | WebSocket transport (optional; requires `converge[websocket]`). |
+| `converge.network.transport.websocket` | WebSocket transport (optional; requires source extra install `-e ".[websocket]"`). |
 
 ## converge.coordination
 

@@ -44,7 +44,7 @@ File-based config is merged with env: file values override env when both specify
 
 ## Config file format
 
-Supported formats: **YAML** (`.yaml`, `.yml`) and **TOML** (`.toml`). YAML parsing requires `pyyaml` (install with `converge[cli]`). TOML uses the standard library `tomllib` (Python 3.11+).
+Supported formats: **YAML** (`.yaml`, `.yml`) and **TOML** (`.toml`). YAML parsing requires `pyyaml` (install from source with `pip install -e ".[cli]"`). TOML uses the standard library `tomllib` (Python 3.11+).
 
 The file must evaluate to a single mapping (dict). Keys: `transport`, `host`, `port`, `agents`, `pool_id`, `discovery_store`, `store_backend`, `store_path`.
 

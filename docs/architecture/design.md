@@ -57,7 +57,7 @@ Transports are hot-swappable and stateless from the runtime’s perspective. Imp
 
 - **Local:** Singleton registry; delivery by recipient or by topic subscription; in-process only.
 - **TCP:** Length-prefixed msgpack over TCP; topic-based routing (namespace `transport.tcp`, attributes host/port); connection pooling.
-- **WebSocket:** Optional; see `converge[websocket]` and the network transport module.
+- **WebSocket:** Optional; install from source with `pip install -e ".[websocket]"` and see the network transport module.
 
 **Identity registry:** Transports that support verification (e.g. local) can use an `IdentityRegistry` (fingerprint → public key) to implement `receive_verified()` and discard or reject messages that fail verification.
 

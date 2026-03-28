@@ -7,7 +7,7 @@ The Store interface (`put`, `get`, `delete`, `list(prefix)`, and optional `put_i
 Converge provides **RedisStore** and **SQLiteStore** under `converge.extensions.storage` with atomic `put_if_absent`, suitable for multi-process deployments.
 
 - **SQLiteStore** (`converge.extensions.storage.sqlite_store`): Single file path, stdlib only. `SQLiteStore(path: str | Path)`; table `(key TEXT PRIMARY KEY, value BLOB)`; pickle serialization; `list(prefix)` via `LIKE prefix%`; `put_if_absent` via `INSERT OR IGNORE`.
-- **RedisStore** (`converge.extensions.storage.redis_store`): Requires `pip install converge[store-backends]` (adds `redis>=5.0`). `RedisStore(redis_url="redis://localhost:6379/0", *, client=None)`; pickle serialization; `list(prefix)` via SCAN; `put_if_absent` via SET NX.
+- **RedisStore** (`converge.extensions.storage.redis_store`): Requires source extra install `pip install -e ".[store-backends]"` (adds `redis>=5.0`). `RedisStore(redis_url="redis://localhost:6379/0", *, client=None)`; pickle serialization; `list(prefix)` via SCAN; `put_if_absent` via SET NX.
 
 ## VersionedStore and migration hook
 

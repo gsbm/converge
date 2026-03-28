@@ -37,6 +37,7 @@ architecture/index
 - [Concepts](user_guide/concepts.md): agents, identity, messages, topics, tasks, pools, decisions
 - [Extensions](user_guide/extensions.md): crypto, LLM, storage
 - [CLI and configuration](user_guide/cli_and_config.md)
+- [Runtime operations](user_guide/runtime_operations.md)
 - [API reference](api/index.md): [Project reference](api/project_reference.md) (module index)
 - [Architecture](architecture/index.md)
 - [Scaling and deployment](guides/scaling.md)

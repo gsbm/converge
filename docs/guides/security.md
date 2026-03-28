@@ -17,8 +17,29 @@ See the [runtime API](api/runtime.md) and [customization](user_guide/customizati
 
 ## Rate limiting and quotas
 
-There is no built-in rate limiting or quotas in the core. Recommend applying them at the gateway or transport layer (e.g. reverse proxy, custom Transport wrapper) or in a sidecar that fronts the agent process.
+Converge provides first-class token-bucket rate limiting via:
+
+- `RateLimiter` (global/sender/topic buckets),
+- `RateLimitHook` for transport middleware enforcement,
+- optional egress enforcement in `StandardExecutor` when `rate_limiter` is set.
+
+Recommended baseline:
+
+1. enforce ingress limits with `HookedTransport(..., hooks=[RateLimitHook(...)])`,
+2. enforce egress limits by passing `rate_limiter` to executor wiring,
+3. monitor dropped counters (`rate_limit_ingress_dropped_total`, `rate_limit_egress_dropped_total`).
 
 ## Hooks and middleware
 
-Pre-send and post-receive hooks are not a dedicated API. You can implement them as a custom Transport wrapper (decorate or wrap the transport and add checks before/after send/receive) or in `Agent.on_tick` / decision handling. No core API change is required.
+Use `HookedTransport` + `MessageHook` for reusable middleware:
+
+- `pre_send(message) -> message | None`,
+- `post_receive(message) -> message | None`,
+- optional `on_error(stage, error, context)`.
+
+Execution order is deterministic (registration order). Returning `None` drops a message.
+
+For runtime paths not covered by transport wrapping, use runtime hooks (`runtime_hooks=`):
+
+- `on_fallback_pre_send(message)`,
+- `on_unverified_drop(context)`.

@@ -21,12 +21,12 @@ extensions
 | Package | Contents |
 |---------|----------|
 | **core** | Agent, Identity, Message, Topic, Task, Pool, Capability, Store, Decision types. |
-| **network** | AgentNetwork, DiscoveryService, AgentDescriptor, DiscoveryQuery, IdentityRegistry, Transport (base, local, TCP). |
+| **network** | AgentNetwork, DiscoveryService, AgentDescriptor, DiscoveryQuery, IdentityRegistry, Transport (base, local, hooks, TCP). |
 | **coordination** | PoolManager, TaskManager, NegotiationProtocol, Consensus, BiddingProtocol, DelegationProtocol. |
-| **runtime** | AgentRuntime, Inbox, Scheduler, Executor protocol, StandardExecutor. |
+| **runtime** | AgentRuntime, Inbox, Scheduler, Executor protocol, StandardExecutor, RuntimeHook. |
 | **policy** | AdmissionPolicy (Open, Whitelist, Token), TrustModel, Governance (Democratic, Dictatorial), ResourceLimits, ActionPolicy, validate_safety. |
-| **observability** | Logging (JsonFormatter, configure_logging, get_logger, log_struct), tracing, MetricsCollector, ReplayLog. |
-| **extensions** | MemoryStore, FileStore, crypto (encrypt, decrypt, derive_key, secure_random_bytes), LLMAgent and providers (OpenAI, Anthropic, Mistral). |
+| **observability** | Logging, tracing, MetricsCollector, CoordinationMetrics, ReplayLog/ReplayRunner, RuntimeOpsServer. |
+| **extensions** | MemoryStore, FileStore, crypto, LLMAgent/providers, RateLimiter/RateLimitHook, webhook connectors. |
 
 Entrypoints:
 - **CLI**: `converge.cli.main` (and `converge run` via `converge.cli:main`);

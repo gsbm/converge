@@ -14,6 +14,7 @@ quickstart
 concepts
 extensions
 customization
+runtime_operations
 cli_and_config
 message_signing
 webhook_connector

@@ -33,6 +33,7 @@ Compact index of public modules and their role. For full signatures and docstrin
 | `converge.network.identity_registry` | IdentityRegistry: map agent_id → public_key for verification. |
 | `converge.network.transport.base` | Transport ABC: start, stop, send, receive(timeout=None). |
 | `converge.network.transport.local` | LocalTransport, LocalTransportRegistry: in-process, topic subscriptions, recipient/topic routing. |
+| `converge.network.transport.hooks` | HookedTransport, MessageHook: ordered pre-send/post-receive middleware wrapper. |
 | `converge.network.transport.tcp` | TcpTransport: length-prefixed msgpack, topic-based routing, connection pool. |
 | `converge.network.transport.websocket` | WebSocket transport (optional; requires `converge[websocket]`). |
 
@@ -51,9 +52,10 @@ Compact index of public modules and their role. For full signatures and docstrin
 
 | Module | Role |
 |--------|------|
-| `converge.runtime.loop` | AgentRuntime, Inbox: start/stop, is_healthy, is_ready; optional health_check, ready_check, receive_timeout_sec, inbox, scheduler, executor_factory, executor_kwargs. |
+| `converge.runtime.loop` | AgentRuntime, Inbox: start/stop, is_healthy, is_ready; optional health_check, ready_check, receive_timeout_sec, inbox, scheduler, executor_factory, executor_kwargs, network injection, ops_server, runtime_hooks. |
 | `converge.runtime.scheduler` | Scheduler: notify, wait_for_work(timeout). |
 | `converge.runtime.executor` | Executor protocol, StandardExecutor: execute decisions; optional custom_handlers, tool_registry, tool_timeout_sec, tool_allowlist, replay_log, safety_policy. |
+| `converge.runtime.hooks` | RuntimeHook protocol: fallback pre-send and unverified-drop callbacks. |
 
 ## converge.policy
 
@@ -71,7 +73,9 @@ Compact index of public modules and their role. For full signatures and docstrin
 | `converge.observability.logging` | JsonFormatter, configure_logging, get_logger, log_struct. |
 | `converge.observability.tracing` | trace context manager, get_current_trace_id, register_span_exporter, SpanExporter. |
 | `converge.observability.metrics` | MetricsCollector: inc, gauge, snapshot, format_prometheus. |
-| `converge.observability.replay` | ReplayLog: record_message, export, load. |
+| `converge.observability.replay` | ReplayLog + ReplayRunner: directional record, export/load, filtered replay. |
+| `converge.observability.runtime_ops` | RuntimeOpsServer: `/health`, `/ready`, `/metrics` HTTP helper. |
+| `converge.observability.coordination_metrics` | CoordinationMetrics: stable task/pool counters and gauges. |
 
 ## converge.extensions
 
@@ -81,3 +85,5 @@ Compact index of public modules and their role. For full signatures and docstrin
 | `converge.extensions.storage.file` | FileStore: file-backed Store (pickle, one file per key). |
 | `converge.extensions.crypto` | encrypt, decrypt, derive_key, secure_random_bytes. |
 | `converge.extensions.llm` | LLMAgent, OpenAIProvider, AnthropicProvider, MistralProvider; base provider interface. |
+| `converge.extensions.rate_limit` | RateLimiter, TokenBucketConfig, RateLimitHook for ingress/egress limiting. |
+| `converge.extensions.connectors` | WebhookConnector, WebhookGateway, provider/security/retry profiles. |

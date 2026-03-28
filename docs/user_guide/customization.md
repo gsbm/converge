@@ -10,7 +10,7 @@ The framework is designed so that most components can be replaced or extended fo
 - **Executor**: Two options:
   - **executor_factory**: Callable `(agent_id, network, task_manager, pool_manager, **kwargs) -> Executor`. The runtime calls it each run loop to get the executor. Use for a fully custom executor.
   - **executor_kwargs**: Dict of kwargs passed to the default `StandardExecutor` (e.g. `custom_handlers`, `safety_policy`, `bidding_protocols`, `tool_timeout_sec`, `tool_allowlist`). Ignored if `executor_factory` is set.
-- **Other runtime options**: `pool_manager`, `task_manager`, `metrics_collector`, `discovery_service`, `agent_descriptor`, `identity_registry`, `replay_log`, `tool_registry`, `checkpoint_store`, `checkpoint_interval_sec`, `health_check`, `ready_check`, `receive_timeout_sec`, `claim_ttl_interval_sec`, `task_poll_interval_sec` are all optional and configurable.
+- **Other runtime options**: `pool_manager`, `task_manager`, `metrics_collector`, `discovery_service`, `agent_descriptor`, `identity_registry`, `replay_log`, `tool_registry`, `checkpoint_store`, `checkpoint_interval_sec`, `health_check`, `ready_check`, `receive_timeout_sec`, `claim_ttl_interval_sec`, `task_poll_interval_sec`, `task_refresh_interval_sec`, `pool_cache_ttl_sec`, `network`, `ops_server`, `runtime_hooks`, `allow_network_transport_mismatch` are all optional and configurable.
 
 ## Executor and decisions
 
@@ -89,9 +89,11 @@ Agents that emit `Propose`, `Vote`, `SubmitBid`, or `Delegate` will have those d
 ## Observability
 
 - **Metrics**: Pass `metrics_collector` (e.g. `MetricsCollector`) to the runtime/executor; implement your own collector with `inc`, `gauge`, `snapshot` if needed. `MetricsCollector.format_prometheus()` returns Prometheus text exposition format for scrape endpoints.
-- **Replay**: Pass `replay_log` (e.g. `ReplayLog`) to record messages; replace with a custom implementation that implements `record_message(message)` if needed.
+- **Replay**: Pass `replay_log` (e.g. `ReplayLog`) to record inbound/outbound messages (`record_inbound`, `record_outbound`; `record_message` remains as compatibility alias).
 - **Tracing**: The runtime uses `trace()` from observability; register a **SpanExporter** via `register_span_exporter(exporter)` so `export(span, duration_sec)` is called when each trace context exits. You can forward to OpenTelemetry or logging.
-- **Health/readiness**: Pass `health_check` and `ready_check` callables to the runtime; `is_healthy()` and `is_ready()` delegate to them. No built-in HTTP; poll from a sidecar or CLI.
+- **Health/readiness**: Pass `health_check` and `ready_check` callables to the runtime; `is_healthy()` and `is_ready()` delegate to them. For HTTP exposure, use `RuntimeOpsServer` (`/health`, `/ready`, `/metrics`) and pass as `ops_server`.
+- **Transport middleware**: Use `HookedTransport(base_transport, hooks=[...])` and implement `MessageHook` (`pre_send`, `post_receive`, optional `on_error`) for reusable policy and filtering.
+- **Rate limiting**: Use `RateLimiter` and `RateLimitHook` to enforce ingress and egress token-bucket limits.
 
 ## Extensions
 
@@ -112,9 +114,13 @@ Agents that emit `Propose`, `Vote`, `SubmitBid`, or `Delegate` will have those d
 | GovernanceModel  | Subclass; pass governance_model in pool spec |
 | Store            | Implement Store; pass to managers/discovery |
 | MetricsCollector | Implement; pass to runtime/executor |
-| ReplayLog        | Implement record_message; pass to runtime |
+| ReplayLog        | Implement record_inbound/record_outbound (record_message supported for compatibility); pass to runtime |
 | claim_ttl_interval_sec | Pass to runtime for automatic release_expired_claims |
 | task_poll_interval_sec | Pass to runtime for periodic task-poll wake-up |
+| network injection | Pass `network=` to runtime (optional transport mismatch override) |
+| ops HTTP helper | Pass `ops_server=RuntimeOpsServer(...)` |
+| transport hooks | Wrap base transport in `HookedTransport(..., hooks=[...])` |
+| rate limiting | Use `RateLimitHook(RateLimiter(...))` in hook chain |
 | Tool             | Implement Tool protocol; register on ToolRegistry |
 | LLM provider     | Implement chat (and optionally chat_stream) |
 

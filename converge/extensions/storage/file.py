@@ -15,6 +15,8 @@ class FileStore(Store):
     Keys are encoded to safe filenames to avoid path traversal and accidental
     directory escaping. Writes are atomic via temp-file + replace.
     """
+    atomic_put_if_absent = True
+    supports_locking = False
 
     def __init__(self, base_path: str):
         self.base_path = Path(base_path)

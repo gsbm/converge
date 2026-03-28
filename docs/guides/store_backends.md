@@ -39,6 +39,7 @@ versioned.check_version()  # calls on_change(1, 2)
 - **delete(key)**: Remove the key; no-op if absent.
 - **list(prefix)**: Return keys that start with `prefix` (e.g. `"task:"` for all task keys).
 - **put_if_absent(key, value)**: Store only if key is absent; return True if stored, False if key existed. Override for atomicity (e.g. Redis SETNX, SQLite INSERT OR IGNORE).
+- **Capability flags**: Backends may expose `atomic_put_if_absent` and `supports_locking` booleans to describe operational guarantees to callers.
 
 ## Redis
 

@@ -7,6 +7,9 @@ class MemoryStore(Store):
     """
     In-memory storage implementation.
     """
+    atomic_put_if_absent = True
+    supports_locking = False
+
     def __init__(self):
         self._data: dict[str, Any] = {}
 

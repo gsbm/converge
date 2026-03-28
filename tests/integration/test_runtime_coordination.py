@@ -162,3 +162,31 @@ async def test_pool_manager_persistence():
     pool2 = pm2.get_pool("p1")
     assert pool2 is not None
     assert pool2.id == "p1"
+
+
+def test_shared_store_task_visibility_across_managers(tmp_path):
+    """Two managers sharing one store see submit/claim/report transitions via refresh."""
+    from converge.extensions.storage.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(path=tmp_path / "shared.sqlite3")
+    tm_a = TaskManager(store=store)
+    tm_b = TaskManager(store=store)
+
+    task = Task(objective={"job": "shared"})
+    task_id = tm_a.submit(task)
+
+    visible_b = tm_b.list_pending_tasks(refresh_from_store=True)
+    assert task_id in {t.id for t in visible_b}
+    assert tm_b.claim("agent-b", task_id) is True
+
+    tm_a.refresh_from_store()
+    claimed = tm_a.get_task(task_id)
+    assert claimed is not None
+    assert claimed.state == TaskState.ASSIGNED
+
+    tm_b.report("agent-b", task_id, {"ok": True})
+    tm_a.refresh_from_store()
+    done = tm_a.get_task(task_id)
+    assert done is not None
+    assert done.state == TaskState.COMPLETED
+    assert done.result == {"ok": True}

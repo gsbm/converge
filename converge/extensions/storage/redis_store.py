@@ -27,6 +27,8 @@ class RedisStore(Store):
     put_if_absent is atomic via SET key value NX. list(prefix) uses SCAN with
     match prefix* for production-safe iteration.
     """
+    atomic_put_if_absent = True
+    supports_locking = True
 
     def __init__(
         self,

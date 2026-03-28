@@ -22,6 +22,8 @@ class SQLiteStore(Store):
     Serialization uses pickle (same as FileStore) so Task, Pool, AgentDescriptor
     work without custom encoders. put_if_absent is atomic via INSERT OR IGNORE.
     """
+    atomic_put_if_absent = True
+    supports_locking = True
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)

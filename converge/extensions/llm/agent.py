@@ -318,6 +318,8 @@ class LLMAgent(Agent):
                     return await achat(chat_messages, **extra)
                 return await asyncio.to_thread(self.provider.chat, chat_messages, **extra)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 last_err = e
                 err_str = str(e).lower()
                 if attempt < 2 and ("rate" in err_str or "timeout" in err_str or "429" in err_str or "503" in err_str):

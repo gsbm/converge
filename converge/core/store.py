@@ -9,6 +9,8 @@ class Store(ABC):
     Optional **put_if_absent**: Override for atomic put-when-absent; default implementation
     is not atomic (get then put). Backends that need safe concurrency should override.
     """
+    atomic_put_if_absent: bool = False
+    supports_locking: bool = False
 
     @abstractmethod
     def put(self, key: str, value: Any) -> None:

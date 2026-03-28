@@ -1,5 +1,6 @@
 """Tests for converge.extensions.llm.agent."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -441,3 +442,42 @@ async def test_llm_agent_decide_raises_inside_running_loop():
     agent = LLMAgent(identity, provider=provider)
     with pytest.raises(RuntimeError, match="active event loop"):
         agent.decide([], [])
+
+
+@pytest.mark.asyncio
+async def test_llm_agent_adecide_retries_transient_errors():
+    identity = Identity.generate()
+
+    class FlakyProvider:
+        def __init__(self):
+            self.calls = 0
+
+        async def achat(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("429 rate limit")
+            return "[]"
+
+    provider = FlakyProvider()
+    agent = LLMAgent(identity, provider=provider)
+    decisions = await agent.adecide([], [])
+    assert decisions == []
+    assert provider.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_llm_agent_adecide_cancellation_propagates():
+    identity = Identity.generate()
+
+    class SlowProvider:
+        async def achat(self, messages, **kwargs):
+            await asyncio.sleep(10)
+            return "[]"
+
+    provider = SlowProvider()
+    agent = LLMAgent(identity, provider=provider)
+    task = asyncio.create_task(agent.adecide([], []))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

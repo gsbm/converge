@@ -1,7 +1,10 @@
 """LLM-driven agent that uses an LLM provider for decide()."""
 
+import contextlib
 import json
 import logging
+import re
+import time
 from typing import Any
 
 from converge.core.agent import Agent
@@ -37,13 +40,110 @@ A task object must have: id, objective (dict), inputs (dict).
 Output ONLY a valid JSON array. If you have no decisions, output [].
 """
 
+# Tool definition for provider-native function calling (emit_decisions). Schema for the decision array.
+EMIT_DECISIONS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_decisions",
+        "description": "Emit a JSON array of decisions (SendMessage, JoinPool, ClaimTask, ReportTask, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "decisions": {
+                    "type": "array",
+                    "description": "Array of decision objects, each with 'type' and type-specific fields.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
+                            "message": {"type": "object"},
+                            "pool_id": {"type": "string"},
+                            "task_id": {"type": "string"},
+                            "result": {},
+                            "task": {"type": "object"},
+                            "spec": {"type": "object"},
+                            "tool_name": {"type": "string"},
+                            "params": {"type": "object"},
+                        },
+                    },
+                },
+            },
+            "required": ["decisions"],
+        },
+    },
+}
+
+
+def _extract_json_array(response: str) -> str:
+    """
+    Extract a JSON array string from LLM response, handling markdown code blocks and stray text.
+    - Strips leading/trailing whitespace.
+    - Extracts content from ```json ... ``` or ``` ... ``` blocks.
+    - Falls back to first [...] or {...} balanced span.
+    """
+    text = response.strip()
+    if not text:
+        return "[]"
+    # Try markdown code blocks: ```json ... ``` or ``` ... ```
+    code_block = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
+    match = code_block.search(text)
+    if match:
+        return match.group(1).strip()
+    # Fallback: find first '[' or '{' and return balanced span
+    for start_char, end_char in (("[", "]"), ("{", "}")):
+        start = text.find(start_char)
+        if start == -1:
+            continue
+        depth = 0
+        in_string = None
+        escape = False
+        i = start
+        while i < len(text):
+            c = text[i]
+            if escape:
+                escape = False
+                i += 1
+                continue
+            if c == "\\" and in_string:
+                escape = True
+                i += 1
+                continue
+            if in_string:
+                if c == in_string:
+                    in_string = None
+                i += 1
+                continue
+            if c in ('"', "'"):
+                in_string = c
+                i += 1
+                continue
+            if c == start_char:
+                depth += 1
+            elif c == end_char:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+            i += 1
+    return text
+
 
 class LLMAgent(Agent):
     """
     Agent that uses an LLM to produce decisions in decide().
     """
 
-    def __init__(self, identity: Any, provider: Any, system_prompt: str | None = None):
+    def __init__(
+        self,
+        identity: Any,
+        provider: Any,
+        system_prompt: str | None = None,
+        tool_registry: Any = None,
+        *,
+        use_structured_output: bool = False,
+        on_decide_error: Any = None,
+        memory: Any = None,
+        few_shot_examples: list[tuple[str, str]] | None = None,
+    ):
         """
         Initialize the LLM agent.
 
@@ -51,13 +151,44 @@ class LLMAgent(Agent):
             identity: Cryptographic identity (converge.core.identity.Identity).
             provider: LLM provider implementing ``chat(messages, **kwargs) -> str``.
             system_prompt: Optional override for the system prompt.
+            tool_registry: Optional ToolRegistry; when set, tool schemas are injected into the system prompt (fallback path).
+            use_structured_output: When True, request provider-native structured output (e.g. OpenAI function calling) when supported.
+            on_decide_error: Optional callable (exception_or_message: Exception | str) -> None for observability when decide fails.
+            memory: Optional ShortTermMemory (or object with append(role, content), get_messages()) for conversation history.
+            few_shot_examples: Optional list of (user_content, assistant_json) example pairs to inject into the prompt.
         """
         super().__init__(identity)
         self.provider = provider
         self._system_prompt = system_prompt or _SYSTEM_PROMPT
+        self._tool_registry = tool_registry
+        self._use_structured_output = use_structured_output
+        self._on_decide_error = on_decide_error
+        self._memory = memory
+        self._few_shot_examples = few_shot_examples or []
 
-    def _format_messages_and_tasks(self, messages: list[Any], tasks: list[Any]) -> list[dict[str, str]]:
-        """Format messages and tasks for the LLM."""
+    def _get_system_prompt(self) -> str:
+        """Return system prompt, appending tool schemas when tool_registry is set."""
+        base = self._system_prompt
+        if self._tool_registry is None:
+            return base
+        try:
+            tools = self._tool_registry.to_provider_tools()
+        except Exception:
+            return base
+        if not tools:
+            return base
+        lines = [base, "", "Available tools (use InvokeTool with tool_name and params):"]
+        for t in tools:
+            fn = t.get("function") or {}
+            name = fn.get("name", "")
+            desc = fn.get("description", "")
+            params = fn.get("parameters", {})
+            lines.append(f"- {name}: {desc}")
+            lines.append(f"  params schema: {json.dumps(params)}")
+        return "\n".join(lines)
+
+    def _format_messages_and_tasks(self, messages: list[Any], tasks: list[Any], tool_observations: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
+        """Format messages, tasks, and optional tool observations for the LLM."""
         parts = []
         if messages:
             msgs_data = []
@@ -78,26 +209,36 @@ class LLMAgent(Agent):
                 for t in tasks
             ]
             parts.append(f"Tasks: {json.dumps(tasks_data)}")
+        if tool_observations:
+            parts.append("Tool observations (previous tool results): " + json.dumps(tool_observations))
         if not parts:
-            return [
-                {"role": "system", "content": self._system_prompt},
-                {"role": "user", "content": "No messages or tasks. Output []."},
-            ]
+            out = [{"role": "system", "content": self._get_system_prompt()}, {"role": "user", "content": "No messages or tasks. Output []."}]
+            if self._memory is not None and hasattr(self._memory, "get_messages"):
+                out = [out[0], *self._memory.get_messages(), out[1]]
+            return out
         content = "\n".join(parts)
-        return [
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": content},
-        ]
+        user_content: str | dict[str, str] = content
+        out: list[dict[str, Any]] = [{"role": "system", "content": self._get_system_prompt()}]
+        if self._memory is not None and hasattr(self._memory, "get_messages"):
+            out.extend(self._memory.get_messages())
+        for u, a in (self._few_shot_examples or [])[:2]:
+            out.append({"role": "user", "content": u})
+            out.append({"role": "assistant", "content": a})
+        out.append({"role": "user", "content": user_content})
+        return out
 
-    def _parse_decisions(self, response: str) -> list[Any]:
-        """Parse LLM response JSON into decision objects."""
+    def _parse_decisions(self, response: str) -> tuple[list[Any], bool]:
+        """Parse LLM response JSON into decision objects. Returns (decisions, parsed_ok)."""
+        extracted = _extract_json_array(response)
         try:
-            data = json.loads(response.strip())
+            data = json.loads(extracted)
         except json.JSONDecodeError:
-            logger.warning("LLM response is not valid JSON: %s", response[:200])
-            return []
+            logger.warning("LLM response is not valid JSON: %s", response[:200], exc_info=True)
+            return [], False
+        if isinstance(data, dict) and "decisions" in data:
+            data = data["decisions"]
         if not isinstance(data, list):
-            return []
+            return [], False
         decisions = []
         for item in data:
             if not isinstance(item, dict):
@@ -159,23 +300,68 @@ class LLMAgent(Agent):
                 if isinstance(tool_name, str):
                     params = params if isinstance(params, dict) else {}
                     decisions.append(InvokeTool(tool_name=tool_name, params=params))
-        return decisions
+        return decisions, True
 
-    def decide(self, messages: list[Any], tasks: list[Any]) -> list[Any]:
+    def decide(self, messages: list[Any], tasks: list[Any], tool_observations: list[dict[str, Any]] | None = None, **kwargs: Any) -> list[Any]:
         """
         Use the LLM to produce decisions from messages and tasks.
 
         Args:
             messages: Incoming messages from the inbox.
             tasks: Task updates or assignments.
+            tool_observations: Optional list of {tool_name, params, result} from previous InvokeTool (ReAct loop).
+            **kwargs: Ignored; for compatibility with base decide().
 
         Returns:
             List of Decision objects (e.g. SendMessage).
         """
-        chat_messages = self._format_messages_and_tasks(messages, tasks)
+        repair_prompt = "Your previous response was not valid JSON. Output ONLY a valid JSON array of decisions, no other text."
+        chat_messages = self._format_messages_and_tasks(messages, tasks, tool_observations=tool_observations)
+
+        def _call_provider(**extra: Any) -> str:
+            last_err: Exception | None = None
+            for attempt in range(3):
+                try:
+                    if self._use_structured_output:
+                        return self.provider.chat(
+                            chat_messages,
+                            use_structured_output=True,
+                            emit_decisions_tool=EMIT_DECISIONS_TOOL,
+                            **extra,
+                        )
+                    return self.provider.chat(chat_messages, **extra)
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e).lower()
+                    if attempt < 2 and ("rate" in err_str or "timeout" in err_str or "429" in err_str or "503" in err_str):
+                        time.sleep(2 ** attempt)
+                        continue
+                    raise
+            raise last_err or RuntimeError("no response")
+
         try:
-            response = self.provider.chat(chat_messages)
+            response = _call_provider()
         except Exception as e:
             logger.warning("LLM provider error: %s", e)
+            if self._on_decide_error is not None:
+                with contextlib.suppress(Exception):
+                    self._on_decide_error(e)
             return []
-        return self._parse_decisions(response)
+        decisions, parsed_ok = self._parse_decisions(response)
+        if not parsed_ok and response.strip():
+            chat_messages.append({"role": "user", "content": repair_prompt})
+            try:
+                response = _call_provider()
+            except Exception as e:
+                logger.warning("LLM provider error on repair: %s", e)
+                if self._on_decide_error is not None:
+                    with contextlib.suppress(Exception):
+                        self._on_decide_error(e)
+                return []
+            decisions, _ = self._parse_decisions(response)
+        if self._memory is not None and hasattr(self._memory, "append") and chat_messages:
+            last_user = next((m.get("content") for m in reversed(chat_messages) if m.get("role") == "user"), None)
+            if last_user is not None:
+                self._memory.append("user", last_user)
+                self._memory.append("assistant", response)
+        return decisions

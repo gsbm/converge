@@ -1,5 +1,6 @@
 """Anthropic provider for the LLM extension."""
 
+import json
 from typing import Any
 
 
@@ -36,14 +37,18 @@ class AnthropicProvider:
     def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> str:
         """
         Send messages to Anthropic and return the completion text.
+        When use_structured_output=True and emit_decisions_tool is provided, uses tools API
+        and returns the tool use input (JSON string).
 
         Args:
             messages: List of {"role": "user"|"assistant"|"system", "content": str}.
-            **kwargs: Overrides (e.g. model, max_tokens).
+            **kwargs: Overrides. use_structured_output and emit_decisions_tool enable structured output.
 
         Returns:
-            The assistant's reply content.
+            The assistant's reply content, or the emit_decisions tool input when structured.
         """
+        use_structured = kwargs.pop("use_structured_output", False)
+        emit_tool = kwargs.pop("emit_decisions_tool", None)
         client = self._get_client()
         model = kwargs.pop("model", self.model)
         max_tokens = kwargs.pop("max_tokens", 1024)
@@ -59,14 +64,32 @@ class AnthropicProvider:
                 anthropic_messages.append({"role": role, "content": content})
 
         system = "\n".join(system_parts) if system_parts else None
-        resp = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=anthropic_messages,
-            system=system,
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": anthropic_messages,
             **kwargs,
-        )
+        }
+        if system:
+            create_kwargs["system"] = system
+        if use_structured and emit_tool:
+            fn = emit_tool.get("function") or {}
+            create_kwargs["tools"] = [{
+                "name": fn.get("name", "emit_decisions"),
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+            }]
+            create_kwargs["tool_choice"] = {"type": "tool", "name": "emit_decisions"}
+
+        resp = client.messages.create(**create_kwargs)
         if not resp.content:
+            return ""
+        if use_structured and emit_tool:
+            for block in resp.content:
+                if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "emit_decisions":
+                    raw = getattr(block, "input", None)
+                    if raw is not None:
+                        return json.dumps(raw) if isinstance(raw, dict) else str(raw)
             return ""
         parts = []
         for block in resp.content:

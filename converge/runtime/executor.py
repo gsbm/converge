@@ -69,6 +69,7 @@ class StandardExecutor:
         custom_handlers: dict[type, Callable[[Decision], Awaitable[None]]] | None = None,
         tool_timeout_sec: float | None = None,
         tool_allowlist: set[str] | None = None,
+        reflect_result: Callable[[str, Any], Any] | Callable[[str, Any], Awaitable[Any]] | None = None,
     ):
         """
         Initialize the executor.
@@ -100,6 +101,8 @@ class StandardExecutor:
                 task failure separately.
             tool_allowlist: Optional set of allowed tool names. When set, InvokeTool for
                 a tool not in this set is skipped and a warning is logged.
+            reflect_result: Optional callable (task_id, result) -> revised result (or awaitable). When set,
+                called before committing ReportTask; the return value is used as the result (reflection step).
         """
         self.agent_id = agent_id
         self.network = network
@@ -116,6 +119,7 @@ class StandardExecutor:
         self.custom_handlers = custom_handlers or {}
         self.tool_timeout_sec = tool_timeout_sec
         self.tool_allowlist = tool_allowlist
+        self.reflect_result = reflect_result
 
     async def execute(self, decisions: list[Decision]) -> None:
         """
@@ -188,7 +192,17 @@ class StandardExecutor:
 
                 elif isinstance(decision, ReportTask):
                     logger.debug(f"Executing ReportTask: {decision.task_id}")
-                    self.task_manager.report(self.agent_id, decision.task_id, decision.result)
+                    result = decision.result
+                    if self.reflect_result is not None:
+                        try:
+                            out = self.reflect_result(decision.task_id, result)
+                            if asyncio.iscoroutine(out):
+                                result = await out
+                            else:
+                                result = out
+                        except Exception as e:
+                            logger.warning("Reflection failed for ReportTask %s: %s", decision.task_id, e)
+                    self.task_manager.report(self.agent_id, decision.task_id, result)
 
                 elif isinstance(decision, SubmitBid):
                     proto = self.bidding_protocols.get(decision.auction_id)

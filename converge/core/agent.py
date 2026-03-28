@@ -50,7 +50,7 @@ class Agent:
         """
         return self.identity.fingerprint
 
-    def decide(self, messages: list[Any], tasks: list[Any]) -> list[Any]:
+    def decide(self, messages: list[Any], tasks: list[Any], **kwargs: Any) -> list[Any]:
         """
         The core decision loop for the agent.
 
@@ -60,6 +60,7 @@ class Agent:
         Args:
             messages (list[Any]): Validated messages from the inbox.
             tasks (list[Any]): Task updates or assignment requests.
+            **kwargs: Optional context, e.g. tool_observations (list[dict]) for ReAct tool loop.
 
         Returns:
             list[Any]: A list of Decision objects or Messages to send.

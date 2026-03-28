@@ -7,6 +7,7 @@ import pytest
 
 from converge.core.identity import Identity
 from converge.extensions.llm import LLMAgent
+from converge.extensions.llm.agent import _extract_json_array
 
 
 class MockProvider:
@@ -294,3 +295,127 @@ def test_openai_provider_import_error_without_openai():
     provider = OpenAIProvider(api_key="test")
     with pytest.raises(ImportError, match="converge\\[llm\\]"):
         provider.chat([{"role": "user", "content": "hi"}])
+
+
+# --- _extract_json_array ---
+
+
+def test_extract_json_array_raw_array():
+    """Raw JSON array is returned as-is (after strip)."""
+    raw = '  [{"type": "ClaimTask", "task_id": "t1"}]  '
+    out = _extract_json_array(raw)
+    assert json.loads(out) == [{"type": "ClaimTask", "task_id": "t1"}]
+
+
+def test_extract_json_array_markdown_json_block():
+    """Content inside ```json ... ``` is extracted."""
+    text = """Here is the result:
+```json
+[{"type": "JoinPool", "pool_id": "p1"}]
+```
+Done."""
+    out = _extract_json_array(text)
+    assert json.loads(out) == [{"type": "JoinPool", "pool_id": "p1"}]
+
+
+def test_extract_json_array_markdown_generic_block():
+    """Content inside ``` ... ``` (no json label) is extracted."""
+    text = """Output:
+```
+[{"type": "ReportTask", "task_id": "t1", "result": {}}]
+```"""
+    out = _extract_json_array(text)
+    assert json.loads(out) == [{"type": "ReportTask", "task_id": "t1", "result": {}}]
+
+
+def test_extract_json_array_fallback_brackets():
+    """Fallback finds first balanced [...] span."""
+    text = 'Some preamble [{"type": "LeavePool", "pool_id": "p1"}] trailing'
+    out = _extract_json_array(text)
+    assert json.loads(out) == [{"type": "LeavePool", "pool_id": "p1"}]
+
+
+def test_extract_json_array_empty_string():
+    """Empty or whitespace returns []."""
+    assert _extract_json_array("") == "[]"
+    assert _extract_json_array("   ") == "[]"
+
+
+def test_extract_json_array_invalid_no_brackets():
+    """When no brackets, returns raw text (may not parse)."""
+    text = "not valid json at all"
+    out = _extract_json_array(text)
+    assert out == text
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(out)
+
+
+def test_llm_agent_tool_registry_injects_schema_into_prompt():
+    """When tool_registry is set, system prompt includes tool info."""
+    from converge.core.tools import ToolRegistry
+
+    class ToolWithSchema:
+        @property
+        def name(self):
+            return "my_tool"
+        @property
+        def schema(self):
+            return {"properties": {"x": {"type": "string"}}}
+        def run(self, params):
+            return params
+
+    registry = ToolRegistry()
+    registry.register(ToolWithSchema())
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = "[]"
+    agent = LLMAgent(identity, provider=provider, tool_registry=registry)
+    prompt = agent._get_system_prompt()
+    assert "Available tools" in prompt
+    assert "my_tool" in prompt
+    assert "x" in prompt
+
+
+def test_llm_agent_parse_decisions_from_tool_call_format():
+    """When response is tool-call format with decisions key, parse correctly."""
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = json.dumps({"decisions": [{"type": "ClaimTask", "task_id": "t1"}]})
+    agent = LLMAgent(identity, provider=provider)
+    decisions, ok = agent._parse_decisions(provider.chat.return_value)
+    assert ok is True
+    assert len(decisions) == 1
+    from converge.core.decisions import ClaimTask
+    assert isinstance(decisions[0], ClaimTask)
+    assert decisions[0].task_id == "t1"
+
+
+def test_llm_agent_on_decide_error_callback():
+    """When provider raises, on_decide_error is called."""
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.side_effect = RuntimeError("API down")
+    errors = []
+    agent = LLMAgent(identity, provider=provider, on_decide_error=errors.append)
+    decisions = agent.decide([], [])
+    assert decisions == []
+    assert len(errors) == 1
+    assert "API down" in str(errors[0])
+
+
+def test_llm_agent_memory_included_in_prompt():
+    """When memory is set, its messages are included in the prompt sent to the provider."""
+    from converge.core.memory import ShortTermMemory
+
+    identity = Identity.generate()
+    provider = MagicMock()
+    provider.chat.return_value = "[]"
+    memory = ShortTermMemory(max_messages=10)
+    memory.append("user", "first")
+    memory.append("assistant", "[]")
+    agent = LLMAgent(identity, provider=provider, memory=memory)
+    agent.decide([], [])
+    call_args = provider.chat.call_args[0][0]
+    assert len(call_args) >= 3
+    assert call_args[1]["role"] == "user" and call_args[1]["content"] == "first"
+    assert call_args[2]["role"] == "assistant"

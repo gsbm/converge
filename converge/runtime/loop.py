@@ -78,6 +78,7 @@ class AgentRuntime:
         receive_timeout_sec: float | None = 30.0,
         claim_ttl_interval_sec: float | None = None,
         task_poll_interval_sec: float | None = None,
+        max_tool_loop_iterations: int = 5,
     ):
         """
         Initialize the agent runtime.
@@ -131,6 +132,7 @@ class AgentRuntime:
                 a background task periodically checks whether the set of pending tasks for this
                 agent has changed and calls scheduler.notify() so the main loop wakes and processes
                 tasks sooner. Ignored if task_manager is None.
+            max_tool_loop_iterations: Max ReAct tool loop iterations (run InvokeTool, feed result back to decide). 0 disables.
         """
         self.agent = agent
         self.transport = transport
@@ -157,6 +159,7 @@ class AgentRuntime:
         self.receive_timeout_sec = receive_timeout_sec
         self.claim_ttl_interval_sec = claim_ttl_interval_sec
         self.task_poll_interval_sec = task_poll_interval_sec
+        self.max_tool_loop_iterations = max_tool_loop_iterations
         self._last_claim_ttl_ts: float = 0.0
         self._task_poll_task: asyncio.Task | None = None
         self._last_pending_task_ids: frozenset[str] | None = None
@@ -381,23 +384,51 @@ class AgentRuntime:
                 else:
                     tasks = self.task_manager.list_pending_tasks()
 
-            # 4. Decide
+            # 4. Decide (with optional ReAct tool loop)
             if messages or tasks:
                 self.agent.on_tick(messages, tasks)
-                with trace("agent.decide"):
-                    if inspect.iscoroutinefunction(self.agent.decide):
-                        decisions = cast(list[Any], await self.agent.decide(messages, tasks))
-                    else:
-                        decisions = cast(list[Any], self.agent.decide(messages, tasks))
-
-                # 5. Execute
-                if decisions:
-                    with trace("executor.execute"):
-                        if executor:
-                            await executor.execute(decisions)
+                tool_observations: list[dict[str, Any]] = []
+                decisions: list[Any] = []
+                for _ in range(max(0, self.max_tool_loop_iterations)):
+                    with trace("agent.decide"):
+                        decide_kwargs: dict[str, Any] = {}
+                        if tool_observations:
+                            decide_kwargs["tool_observations"] = tool_observations
+                        if inspect.iscoroutinefunction(self.agent.decide):
+                            decisions = cast(list[Any], await self.agent.decide(messages, tasks, **decide_kwargs))
                         else:
-                            for decision in decisions:
-                                await self._execute_decision_fallback(decision)
+                            decisions = cast(list[Any], self.agent.decide(messages, tasks, **decide_kwargs))
+
+                    from converge.core.decisions import Decision, InvokeTool
+                    invoke_only = [d for d in decisions if isinstance(d, InvokeTool)]
+                    other_decisions = [d for d in decisions if not isinstance(d, InvokeTool)]
+
+                    if other_decisions and executor:
+                        with trace("executor.execute"):
+                            await executor.execute(other_decisions)
+                    elif other_decisions:
+                        for decision in other_decisions:
+                            await self._execute_decision_fallback(decision)
+
+                    if not invoke_only:
+                        break
+                    if not self.tool_registry or self.max_tool_loop_iterations <= 0:
+                        if invoke_only and executor:
+                            await executor.execute(cast(list[Decision], invoke_only))
+                        break
+
+                    for inv in invoke_only:
+                        tool = self.tool_registry.get(inv.tool_name)
+                        obs = {"tool_name": inv.tool_name, "params": inv.params}
+                        if tool is not None:
+                            try:
+                                result = await asyncio.to_thread(tool.run, inv.params)
+                                obs["result"] = result
+                            except Exception as e:
+                                obs["error"] = str(e)
+                        else:
+                            obs["error"] = "tool not found"
+                        tool_observations.append(obs)
 
             # Optional checkpoint for observability (pool/task state restored via same store on restart)
             if self.checkpoint_store is not None:

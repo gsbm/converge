@@ -96,6 +96,21 @@ async def test_executor_leave_pool_create_pool_report_task():
 
 
 @pytest.mark.asyncio
+async def test_executor_reflect_result_revises_report():
+    """When reflect_result is set, ReportTask result is revised before report."""
+    network = MagicMock()
+    tm = MagicMock(spec=TaskManager)
+    pm = MagicMock(spec=PoolManager)
+
+    def reflector(task_id: str, result):
+        return {"revised": result}
+
+    executor = StandardExecutor("agent1", network, tm, pm, reflect_result=reflector)
+    await executor.execute([ReportTask("task1", {"raw": "data"})])
+    tm.report.assert_called_once_with("agent1", "task1", {"revised": {"raw": "data"}})
+
+
+@pytest.mark.asyncio
 async def test_executor_protocol_default_execute():
     class StubExecutor:
         async def execute(self, decisions):

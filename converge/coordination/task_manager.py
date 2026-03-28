@@ -7,6 +7,7 @@ from converge.core.task import Task, TaskState
 
 if TYPE_CHECKING:
     from converge.core.topic import Topic
+    from converge.observability.coordination_metrics import CoordinationMetrics
 
 
 class TaskManager:
@@ -16,7 +17,7 @@ class TaskManager:
     Handles task persistence, assignment (claiming), and result reporting.
     Acts as the source of truth for task state.
     """
-    def __init__(self, store: Store | None = None):
+    def __init__(self, store: Store | None = None, coordination_metrics: "CoordinationMetrics | None" = None):
         if store is None:
             from converge.extensions.storage.memory import MemoryStore
             store = MemoryStore()
@@ -24,6 +25,7 @@ class TaskManager:
         self.tasks: dict[str, Task] = {}
         self.pending_task_ids: set[str] = set()
         self._completion_events: dict[str, asyncio.Event] = {}
+        self.coordination_metrics = coordination_metrics
 
     def refresh_from_store(self) -> None:
         """
@@ -57,6 +59,10 @@ class TaskManager:
         self.store.put(f"task:{task.id}", task)
         if task.state == TaskState.PENDING:
             self.pending_task_ids.add(task.id)
+            if self.coordination_metrics is not None:
+                self.coordination_metrics.pending_tasks(len(self.pending_task_ids))
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.task_submitted()
         return task.id
 
     def claim(self, agent_id: str, task_id: str) -> bool:
@@ -87,6 +93,9 @@ class TaskManager:
         task.assigned_to = agent_id
         task.claimed_at = time.monotonic()
         self.pending_task_ids.discard(task_id)
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.task_claimed()
+            self.coordination_metrics.pending_tasks(len(self.pending_task_ids))
         self.store.put(f"task:{task.id}", task)
         return True
 
@@ -111,6 +120,9 @@ class TaskManager:
         if task.state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED):
             return False
         self.pending_task_ids.discard(task_id)
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.task_cancelled()
+            self.coordination_metrics.pending_tasks(len(self.pending_task_ids))
         task.state = TaskState.CANCELLED
         task.assigned_to = None
         task.claimed_at = None
@@ -148,6 +160,9 @@ class TaskManager:
         task.result = reason
         task.claimed_at = None
         self.pending_task_ids.discard(task_id)
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.task_failed()
+            self.coordination_metrics.pending_tasks(len(self.pending_task_ids))
         self.store.put(f"task:{task.id}", task)
         if task_id in self._completion_events:
             self._completion_events[task_id].set()
@@ -188,6 +203,8 @@ class TaskManager:
                 task.assigned_to = None
                 task.claimed_at = None
                 self.pending_task_ids.add(task_id)
+                if self.coordination_metrics is not None:
+                    self.coordination_metrics.pending_tasks(len(self.pending_task_ids))
                 self.store.put(f"task:{task.id}", task)
                 released.append(task_id)
         return released
@@ -215,6 +232,9 @@ class TaskManager:
         task.result = result
         task.state = TaskState.COMPLETED
         self.pending_task_ids.discard(task_id)
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.task_completed()
+            self.coordination_metrics.pending_tasks(len(self.pending_task_ids))
         self.store.put(f"task:{task.id}", task)
         if task_id in self._completion_events:
             self._completion_events[task_id].set()

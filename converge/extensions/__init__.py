@@ -5,9 +5,13 @@ from converge.extensions.connectors import (
     WebhookRetryPolicy,
     WebhookSecurityPolicy,
 )
+from converge.extensions.rate_limit import RateLimiter, RateLimitHook, TokenBucketConfig
 
 __all__ = [
     "ProviderProfile",
+    "RateLimitHook",
+    "RateLimiter",
+    "TokenBucketConfig",
     "WebhookConnector",
     "WebhookGateway",
     "WebhookRetryPolicy",

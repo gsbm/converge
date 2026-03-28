@@ -485,3 +485,84 @@ async def test_runtime_task_poll_interval_notifies_on_new_task():
     await runtime.stop()
 
     assert notify_count[0] > initial_notifies
+
+
+def test_runtime_network_injection_and_validation():
+    from converge.network.network import AgentNetwork
+
+    identity = Identity.generate()
+    agent = Agent(identity)
+    transport = LocalTransport(identity.fingerprint)
+    injected_network = AgentNetwork(transport)
+    runtime = AgentRuntime(agent, transport, network=injected_network)
+    assert runtime.network is injected_network
+
+    other_transport = LocalTransport("other")
+    with pytest.raises(ValueError, match="transport does not match"):
+        AgentRuntime(agent, transport, network=AgentNetwork(other_transport))
+
+    runtime2 = AgentRuntime(
+        agent,
+        transport,
+        network=AgentNetwork(other_transport),
+        allow_network_transport_mismatch=True,
+    )
+    assert runtime2.network is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_starts_and_stops_ops_server():
+    identity = Identity.generate()
+    agent = Agent(identity)
+    transport = LocalTransport(identity.fingerprint)
+    ops_server = MagicMock()
+    runtime = AgentRuntime(agent, transport, ops_server=ops_server)
+    await runtime.start()
+    await runtime.stop()
+    ops_server.start.assert_called_once()
+    ops_server.stop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_hook_on_unverified_drop_called():
+    class DropTransport(Transport):
+        async def send(self, message: Message) -> None:
+            _ = message
+
+        async def receive(self, timeout: float | None = None) -> Message:
+            _ = timeout
+            raise TimeoutError()
+
+        async def receive_verified(self, _registry, timeout: float | None = None):
+            _ = timeout
+            await asyncio.sleep(0)
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class Hook:
+        def __init__(self):
+            self.called = 0
+
+        def on_unverified_drop(self, context):
+            assert "agent_id" in context
+            self.called += 1
+
+    identity = Identity.generate()
+    agent = Agent(identity)
+    registry = IdentityRegistry()
+    hook = Hook()
+    runtime = AgentRuntime(
+        agent,
+        DropTransport(),
+        identity_registry=registry,
+        runtime_hooks=[hook],
+        receive_timeout_sec=0.01,
+    )
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    await runtime.stop()
+    assert hook.called >= 1

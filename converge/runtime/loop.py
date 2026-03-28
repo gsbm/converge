@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 from converge.core.agent import Agent
+from converge.network.network import AgentNetwork
 from converge.network.transport.base import Transport
 from converge.observability.tracing import trace
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from converge.network.identity_registry import IdentityRegistry
     from converge.observability.metrics import MetricsCollector
     from converge.observability.replay import ReplayLog
+    from converge.observability.runtime_ops import RuntimeOpsServer
+    from converge.runtime.hooks import RuntimeHook
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,11 @@ class AgentRuntime:
         scheduler_timeout_sec: float = 1.0,
         task_refresh_interval_sec: float | None = 0.5,
         pool_cache_ttl_sec: float | None = 1.0,
+        *,
+        network: AgentNetwork | None = None,
+        ops_server: "RuntimeOpsServer | None" = None,
+        runtime_hooks: list["RuntimeHook"] | None = None,
+        allow_network_transport_mismatch: bool = False,
     ):
         """
         Initialize the agent runtime.
@@ -122,7 +130,7 @@ class AgentRuntime:
                 (e.g. custom_handlers, safety_policy, bidding_protocols, tool_timeout_sec, tool_allowlist).
                 Ignored if executor_factory is set.
             health_check: Optional callable () -> bool. When set, is_healthy() delegates to it.
-                No built-in HTTP server; operators can poll from a sidecar or CLI.
+                Optionally expose via RuntimeOpsServer helper.
             ready_check: Optional callable () -> bool. When set, is_ready() delegates to it.
             receive_timeout_sec: Optional timeout for transport.receive() so the loop can react to
                 shutdown. When set, receive() is called with this timeout; TimeoutError is caught and
@@ -140,6 +148,11 @@ class AgentRuntime:
             task_refresh_interval_sec: Optional interval for refreshing task visibility from shared store
                 when polling for tasks. None disables periodic refresh (cache-only reads).
             pool_cache_ttl_sec: Optional TTL for cached pool membership lookups. None disables caching.
+            network: Optional injected AgentNetwork. When None, runtime builds AgentNetwork(transport).
+            ops_server: Optional RuntimeOpsServer helper. When set, runtime starts/stops it with lifecycle.
+            runtime_hooks: Optional runtime hooks for fallback send and unverified receive drop.
+            allow_network_transport_mismatch: If False and network is provided, require network.transport
+                to be the same object as transport.
         """
         self.agent = agent
         self.transport = transport
@@ -176,11 +189,29 @@ class AgentRuntime:
         self._last_task_refresh_ts: float = 0.0
         self._cached_pool_ids: list[str] | None = None
         self._pool_cache_ts: float = 0.0
+        self.ops_server = ops_server
+        self.runtime_hooks = runtime_hooks or []
+        self.network = network
+        if (
+            self.network is not None
+            and not allow_network_transport_mismatch
+            and getattr(self.network, "transport", None) is not self.transport
+        ):
+            raise ValueError("Injected network transport does not match runtime transport")
 
         from .scheduler import Scheduler
         self.pool_manager = pool_manager
         self.task_manager = task_manager
         self.scheduler = Scheduler() if scheduler is None else scheduler
+        self.coordination_metrics = None
+        if self.metrics_collector is not None:
+            from converge.observability.coordination_metrics import CoordinationMetrics
+
+            self.coordination_metrics = CoordinationMetrics(self.metrics_collector)
+            if self.pool_manager is not None and getattr(self.pool_manager, "coordination_metrics", None) is None:
+                self.pool_manager.coordination_metrics = self.coordination_metrics
+            if self.task_manager is not None and getattr(self.task_manager, "coordination_metrics", None) is None:
+                self.task_manager.coordination_metrics = self.coordination_metrics
 
     def is_healthy(self) -> bool:
         """Return health status. Delegates to health_check callable if set, else True."""
@@ -204,6 +235,8 @@ class AgentRuntime:
         self.agent.on_start()
 
         await self.transport.start()
+        if self.ops_server is not None:
+            self.ops_server.start()
 
         # Register with discovery so peers can find this agent by topic/capability
         if self.discovery_service is not None:
@@ -246,6 +279,8 @@ class AgentRuntime:
                 await self._task_poll_task
 
         await self.transport.stop()
+        if self.ops_server is not None:
+            self.ops_server.stop()
 
         if self.discovery_service is not None:
             self.discovery_service.unregister(self.agent.id)
@@ -267,6 +302,14 @@ class AgentRuntime:
                         timeout=timeout,
                     )
                     if message is None:
+                        for hook in self.runtime_hooks:
+                            callback = getattr(hook, "on_unverified_drop", None)
+                            if not callable(callback):
+                                continue
+                            try:
+                                callback({"agent_id": self.agent.id})
+                            except Exception:
+                                logger.debug("runtime hook on_unverified_drop failed", exc_info=True)
                         logger.debug("Dropping unverified message (unknown sender or bad signature)")
                         continue
                 else:
@@ -274,7 +317,11 @@ class AgentRuntime:
                 if self.metrics_collector:
                     self.metrics_collector.inc("messages_received")
                 if self.replay_log is not None:
-                    self.replay_log.record_message(message)
+                    self.replay_log.record_inbound(
+                        message,
+                        agent_id=self.agent.id,
+                        transport=type(self.transport).__name__,
+                    )
                 await self.inbox.push(message)
                 self.scheduler.notify()
             except asyncio.CancelledError:
@@ -364,15 +411,9 @@ class AgentRuntime:
 
     async def _run_loop(self) -> None:
         """The main execution loop."""
-        from converge.network.network import AgentNetwork
-
         from .executor import StandardExecutor
 
-        # Setup executor if possible
-        # We wrap transport in temporary network object if needed, or if we have one.
-        # Ideally Runtime gets AgentNetwork, not just Transport.
-        # For backward compatibility, we wrap.
-        network = AgentNetwork(self.transport)
+        network = self.network if self.network is not None else AgentNetwork(self.transport)
 
         # Just use inline logic using the new Executor class to prove separation
         # If managers are None, we can't fully execute some decisions, but that's existing behavior.
@@ -390,6 +431,7 @@ class AgentRuntime:
                     metrics_collector=self.metrics_collector,
                     replay_log=self.replay_log,
                     tool_registry=self.tool_registry,
+                    coordination_metrics=self.coordination_metrics,
                 )
             else:
                 executor = StandardExecutor(
@@ -400,6 +442,7 @@ class AgentRuntime:
                     metrics_collector=self.metrics_collector,
                     replay_log=self.replay_log,
                     tool_registry=self.tool_registry,
+                    coordination_metrics=self.coordination_metrics,
                     **self.executor_kwargs,
                 )
         else:
@@ -508,6 +551,17 @@ class AgentRuntime:
     async def _execute_decision_fallback(self, decision: Any) -> None:
         # Legacy fallback if no executor configured
         if hasattr(decision, 'sender'): # Message
-             if not decision.signature:
-                 decision = self.agent.sign_message(decision)
-             await self.transport.send(decision)
+            for hook in self.runtime_hooks:
+                callback = getattr(hook, "on_fallback_pre_send", None)
+                if not callable(callback):
+                    continue
+                try:
+                    decision = callback(decision)
+                except Exception:
+                    logger.debug("runtime hook on_fallback_pre_send failed", exc_info=True)
+                    decision = None
+                if decision is None:
+                    return
+            if not decision.signature:
+                decision = self.agent.sign_message(decision)
+            await self.transport.send(decision)

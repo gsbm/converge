@@ -11,12 +11,13 @@ class PoolManager:
     Persists pool state to a backing store if provided. Handles creation,
     membership management (join/leave), and retrieval of pool data.
     """
-    def __init__(self, store: Store | None = None):
+    def __init__(self, store: Store | None = None, coordination_metrics=None):
         if store is None:
             from converge.extensions.storage.memory import MemoryStore
             store = MemoryStore()
         self.store = store
         self.pools: dict[str, Pool] = {}
+        self.coordination_metrics = coordination_metrics
 
     def create_pool(self, spec: dict[str, Any]) -> Pool:
         """
@@ -48,6 +49,9 @@ class PoolManager:
         )
         self.pools[pool.id] = pool
         self.store.put(f"pool:{pool.id}", pool)
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.pool_created()
+            self.coordination_metrics.pool_size(len(pool.agents))
         return pool
 
     def join_pool(self, agent_id: str, pool_id: str) -> bool:
@@ -91,6 +95,9 @@ class PoolManager:
 
         pool.add_agent(agent_id)
         self.store.put(f"pool:{pool.id}", pool)
+        if self.coordination_metrics is not None:
+            self.coordination_metrics.pool_join()
+            self.coordination_metrics.pool_size(len(pool.agents))
         return True
 
     def leave_pool(self, agent_id: str, pool_id: str) -> None:
@@ -110,6 +117,9 @@ class PoolManager:
         if pool:
             pool.remove_agent(agent_id)
             self.store.put(f"pool:{pool.id}", pool)
+            if self.coordination_metrics is not None:
+                self.coordination_metrics.pool_leave()
+                self.coordination_metrics.pool_size(len(pool.agents))
 
     def get_pool(self, pool_id: str) -> Pool | None:
         """

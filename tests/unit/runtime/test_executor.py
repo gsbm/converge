@@ -186,6 +186,30 @@ async def test_executor_send_message_with_metrics():
 
 
 @pytest.mark.asyncio
+async def test_executor_send_message_dropped_by_rate_limiter():
+    from unittest.mock import AsyncMock
+
+    from converge.extensions.rate_limit import RateLimiter, TokenBucketConfig
+    from converge.observability.metrics import MetricsCollector
+
+    network = MagicMock()
+    network.send = AsyncMock(return_value=None)
+    metrics = MetricsCollector()
+    limiter = RateLimiter(global_config=TokenBucketConfig(capacity=0.0, refill_tokens_per_sec=0.0))
+    executor = StandardExecutor(
+        "agent1",
+        network,
+        MagicMock(spec=TaskManager),
+        MagicMock(spec=PoolManager),
+        metrics_collector=metrics,
+        rate_limiter=limiter,
+    )
+    await executor.execute([SendMessage(message=Message(sender="agent1", payload={}))])
+    network.send.assert_not_called()
+    assert metrics.snapshot()["counters"].get("rate_limit_egress_dropped_total", 0) == 1
+
+
+@pytest.mark.asyncio
 async def test_executor_edges():
     from converge.core.decisions import SubmitTask
 

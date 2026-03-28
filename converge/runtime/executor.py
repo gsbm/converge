@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from converge.coordination.delegation import DelegationProtocol
     from converge.coordination.negotiation import NegotiationProtocol
     from converge.core.tools import ToolRegistry
+    from converge.extensions.rate_limit import RateLimiter
+    from converge.observability.coordination_metrics import CoordinationMetrics
     from converge.observability.metrics import MetricsCollector
     from converge.observability.replay import ReplayLog
     from converge.policy.safety import ActionPolicy, ResourceLimits
@@ -70,6 +72,8 @@ class StandardExecutor:
         tool_timeout_sec: float | None = None,
         tool_allowlist: set[str] | None = None,
         reflect_result: Callable[[str, Any], Any] | Callable[[str, Any], Awaitable[Any]] | None = None,
+        rate_limiter: "RateLimiter | None" = None,
+        coordination_metrics: "CoordinationMetrics | None" = None,
     ):
         """
         Initialize the executor.
@@ -103,6 +107,8 @@ class StandardExecutor:
                 a tool not in this set is skipped and a warning is logged.
             reflect_result: Optional callable (task_id, result) -> revised result (or awaitable). When set,
                 called before committing ReportTask; the return value is used as the result (reflection step).
+            rate_limiter: Optional rate limiter for outbound SendMessage enforcement (egress).
+            coordination_metrics: Optional structured task/pool metrics helper.
         """
         self.agent_id = agent_id
         self.network = network
@@ -120,6 +126,8 @@ class StandardExecutor:
         self.tool_timeout_sec = tool_timeout_sec
         self.tool_allowlist = tool_allowlist
         self.reflect_result = reflect_result
+        self.rate_limiter = rate_limiter
+        self.coordination_metrics = coordination_metrics
 
     async def execute(self, decisions: list[Decision]) -> None:
         """
@@ -161,10 +169,23 @@ class StandardExecutor:
                     self.metrics_collector.inc("decisions_executed")
                 if isinstance(decision, SendMessage):
                     if self.network is not None:
+                        if self.rate_limiter is not None and not self.rate_limiter.allow_message(
+                            decision.message,
+                            direction="egress",
+                        ):
+                            logger.warning("SendMessage dropped by rate limiter")
+                            if self.metrics_collector:
+                                self.metrics_collector.inc("rate_limit_egress_dropped_total")
+                            continue
                         logger.debug(f"Executing SendMessage: {decision.message.id}")
                         await self.network.send(decision.message)
                         if self.replay_log is not None:
-                            self.replay_log.record_message(decision.message)
+                            transport_obj = getattr(self.network, "transport", None)
+                            self.replay_log.record_outbound(
+                                decision.message,
+                                agent_id=self.agent_id,
+                                transport=type(transport_obj).__name__ if transport_obj is not None else None,
+                            )
                         if self.metrics_collector:
                             self.metrics_collector.inc("messages_sent")
 

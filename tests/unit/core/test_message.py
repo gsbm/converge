@@ -2,6 +2,7 @@
 
 import msgpack
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from converge.core.identity import Identity
 from converge.core.message import Message
@@ -81,3 +82,29 @@ def test_message_signing_canonical_payload_order():
         recipient=m1.recipient,
     ).sign(sender)
     assert m1.signature == m2.signature
+
+
+def test_message_signing_compatibility_vector():
+    """
+    Compatibility vector for deterministic signing bytes.
+
+    This protects cross-version verification behavior.
+    """
+    private_key = bytes.fromhex("1f" * 32)
+    sk = ed25519.Ed25519PrivateKey.from_private_bytes(private_key)
+    public_key = sk.public_key().public_bytes_raw()
+    identity = Identity.from_public_key(public_key)
+    identity = Identity(public_key=identity.public_key, private_key=private_key, fingerprint=identity.fingerprint)
+
+    msg = Message(
+        id="msg-fixed-001",
+        sender=identity.fingerprint,
+        payload={"b": 2, "a": {"z": 1, "y": 2}},
+        timestamp=1700000000000,
+    ).sign(identity)
+
+    expected_sig_hex = (
+        "c68853863eac5d9371772d11d12d4356bb341d97934858e4667d76b3dc8f7169"
+        "5c44cb20a55a757bad792d36885ee41f67391c9e733fd0d498de788126f37e08"
+    )
+    assert msg.signature.hex() == expected_sig_hex

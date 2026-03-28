@@ -79,6 +79,17 @@ store_backend = "sqlite"
 store_path = "/tmp/converge.sqlite3"
 ```
 
+Example TOML (Redis backend):
+
+```toml
+transport = "tcp"
+host = "0.0.0.0"
+port = 9000
+agents = 1
+store_backend = "redis"
+store_path = "redis://localhost:6379/0"
+```
+
 ## Run behavior
 
 With `converge run`, the process:
@@ -93,3 +104,17 @@ With `converge run`, the process:
 8. On interrupt, stops all runtimes cleanly.
 
 To use WebSocket transport or custom persistence, use the Python API (see [Quick start](quickstart.md) and [API reference](../api/index.md)).
+
+## Migration from `discovery_store`
+
+`discovery_store` remains supported for backward compatibility, but new configs should prefer:
+
+- `store_backend`
+- `store_path`
+
+Migration mapping:
+
+- `discovery_store: memory` -> `store_backend: memory`
+- `discovery_store: /path/to/dir` -> `store_backend: file`, `store_path: /path/to/dir`
+
+When using multi-agent or multi-process coordination, prefer `sqlite` or `redis` store backends for better shared-state semantics.

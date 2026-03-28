@@ -1,7 +1,9 @@
+import importlib.util
 import os
 import pickle
 import tempfile
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,11 +18,15 @@ class FileStore(Store):
     directory escaping. Writes are atomic via temp-file + replace.
     """
     atomic_put_if_absent = True
-    supports_locking = False
+    supports_locking = True
 
-    def __init__(self, base_path: str):
+    def __init__(self, base_path: str, *, locking: bool = False):
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self._locking = locking
+        self._lock_path = self.base_path / ".store.lock"
+        if self._locking and importlib.util.find_spec("fcntl") is None:
+            raise ValueError("FileStore locking requires fcntl support on this platform")
 
     @staticmethod
     def _encode_key(key: str) -> str:
@@ -44,56 +50,77 @@ class FileStore(Store):
         # Backward compatibility for older stores with raw key filenames.
         return self.base_path / key
 
+    @contextmanager
+    def _exclusive_lock(self):
+        if not self._locking:
+            yield
+            return
+        import fcntl
+
+        with self._lock_path.open("a+b") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
     def put(self, key: str, value: Any) -> None:
-        path = self._get_path(key)
-        fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", dir=str(self.base_path))
-        tmp_path = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "wb") as f:
-                pickle.dump(value, f)
-                f.flush()
-            tmp_path.replace(path)
-        finally:
-            if tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
+        with self._exclusive_lock():
+            path = self._get_path(key)
+            fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", dir=str(self.base_path))
+            tmp_path = Path(tmp_name)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pickle.dump(value, f)
+                    f.flush()
+                tmp_path.replace(path)
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
 
     def get(self, key: str) -> Any | None:
-        path = self._get_path(key)
-        legacy_path = self._get_legacy_path(key)
-        target = path if path.exists() else legacy_path
-        if not target.exists():
-            return None
-        try:
-            with target.open("rb") as f:
-                return pickle.load(f)
-        except Exception:
-            return None
+        with self._exclusive_lock():
+            path = self._get_path(key)
+            legacy_path = self._get_legacy_path(key)
+            target = path if path.exists() else legacy_path
+            if not target.exists():
+                return None
+            try:
+                with target.open("rb") as f:
+                    return pickle.load(f)
+            except Exception:
+                return None
 
     def delete(self, key: str) -> None:
-        for path in (self._get_path(key), self._get_legacy_path(key)):
-            if path.exists():
-                path.unlink()
+        with self._exclusive_lock():
+            for path in (self._get_path(key), self._get_legacy_path(key)):
+                if path.exists():
+                    path.unlink()
 
     def list(self, prefix: str = "") -> list[str]:
-        if not self.base_path.exists():
-            return []
-        keys: list[str] = []
-        seen: set[str] = set()
-        for f in self.base_path.iterdir():
-            decoded = self._decode_name(f.name)
-            key = decoded if decoded is not None else f.name
-            if key.startswith(prefix) and key not in seen:
-                keys.append(key)
-                seen.add(key)
-        return keys
+        with self._exclusive_lock():
+            if not self.base_path.exists():
+                return []
+            keys: list[str] = []
+            seen: set[str] = set()
+            for f in self.base_path.iterdir():
+                if f.name == ".store.lock":
+                    continue
+                decoded = self._decode_name(f.name)
+                key = decoded if decoded is not None else f.name
+                if key.startswith(prefix) and key not in seen:
+                    keys.append(key)
+                    seen.add(key)
+            return keys
 
     def put_if_absent(self, key: str, value: Any) -> bool:
-        path = self._get_path(key)
-        if path.exists() or self._get_legacy_path(key).exists():
-            return False
-        try:
-            with path.open("xb") as f:
-                pickle.dump(value, f)
-            return True
-        except FileExistsError:
-            return False
+        with self._exclusive_lock():
+            path = self._get_path(key)
+            if path.exists() or self._get_legacy_path(key).exists():
+                return False
+            try:
+                with path.open("xb") as f:
+                    pickle.dump(value, f)
+                return True
+            except FileExistsError:
+                return False

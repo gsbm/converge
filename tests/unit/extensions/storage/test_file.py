@@ -94,3 +94,10 @@ def test_file_store_blocks_path_traversal_key(tmp_path):
     store.put("../escape", {"ok": True})
     assert store.get("../escape") == {"ok": True}
     assert not (tmp_path.parent / "escape").exists()
+
+
+def test_file_store_with_locking_option(tmp_path):
+    store = FileStore(str(tmp_path), locking=True)
+    store.put("k1", {"x": 1})
+    assert store.get("k1") == {"x": 1}
+    assert "k1" in store.list()

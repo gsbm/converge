@@ -16,4 +16,5 @@ extensions
 customization
 cli_and_config
 message_signing
+webhook_connector
 ```

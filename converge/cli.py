@@ -171,6 +171,18 @@ def main() -> None:
         help="Enable verbose logging",
     )
 
+    webhook_parser = subparsers.add_parser("webhook-sidecar", help="Run webhook connector sidecar")
+    webhook_parser.add_argument(
+        "-c", "--config",
+        required=True,
+        help="Webhook sidecar config path (JSON or TOML)",
+    )
+    webhook_parser.add_argument(
+        "--json-logs",
+        action="store_true",
+        help="Enable JSON structured logs",
+    )
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -245,6 +257,12 @@ def main() -> None:
 
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(_run())
+    elif args.command == "webhook-sidecar":
+        from converge.extensions.connectors.sidecar import main as webhook_sidecar_main
+
+        webhook_sidecar_main(
+            ["--config", args.config, *(["--json-logs"] if args.json_logs else [])],
+        )
 
 
 if __name__ == "__main__":

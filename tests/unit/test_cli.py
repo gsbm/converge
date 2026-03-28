@@ -134,3 +134,14 @@ def test_validate_config_accepts_valid_config():
 def test_validate_config_allows_unknown_keys():
     """Unknown keys are allowed (backward compatibility)."""
     _validate_config({"unknown_key": 42, "port": 8888})
+
+
+def test_cli_main_webhook_sidecar():
+    import sys
+
+    with (
+        patch.object(sys, "argv", ["converge", "webhook-sidecar", "--config", "x.toml"]),
+        patch("converge.extensions.connectors.sidecar.main") as mock_sidecar_main,
+    ):
+        main()
+        mock_sidecar_main.assert_called_once()
